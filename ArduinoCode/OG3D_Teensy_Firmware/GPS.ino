@@ -9,11 +9,15 @@
 char rxbuffer_RS232_out[1023];
 char txbuffer_RS232_out[1023];
 #else  //v4.5 ----to set to correct values
-#define GPS1 Serial7
-#define GPS_Dual Serial2
-#define GPS_RTK Serial3
+#define GPS1 Serial2
+#define GPS_Dual Serial8
+#define GPS_RTK Serial3 // Radio RTK conectada a cabezal H1 -> Pin 15 (RX3)
 #define RTK_Baud 115200
+// Salida RS232 conectada al transceptor SP3232 -> Pin 20 (TX5) y Pin 21 (RX5)
+#define RS232_OUT Serial5
+#define RS323_OUT_baud 57600
 #endif
+
 char rxbuffer[512];   //Extra serial rx buffer
 char txbuffer[1023];  //Extra serial tx buffer
 
