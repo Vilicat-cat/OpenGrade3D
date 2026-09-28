@@ -67,9 +67,9 @@ bool invertBladeOffset = false;
 #endif
 //leds
 #ifdef useLEDs
-#define LED_DW 12    //led down Pin 12 (AS_ACT) para indicador de modo automático
-#define LED_UP 38    //led up D38 disponible en cabezal para LED SUBIR
-#define LED_AUTO 26  //led auto D26 disponible en cabezal para LED BAJAR
+#define LED_DW 27    //led down 
+#define LED_UP 38    //led up 
+#define LED_AUTO 36  //led auto 
 #define LED_ON 5    //on led
 #endif
 #endif
