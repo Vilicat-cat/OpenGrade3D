@@ -54,8 +54,8 @@ bool invertBladeOffset = false;
 #else  //AiO v4.5 // pin numbers not set yet
 
 #define DIR_ENABLE 4     //PD4 cytron dir
-#define PWM_OUT 3        //PD3  cytron pwm
-#define LOCK_PIN 2       //LOCK output
+#define PWM_OUT 2        //PD3  cytron pwm
+#define LOCK_PIN 3       //LOCK output
 #define AUTOMODE_PIN 32  //this pin must be low (to ground) to activate automode IMP on PCB --the AiOv4 steerPin
 #define LEVER_UP A13     // first axle --to AiOv4 Pin A13 (Teensy Pin 27) <- Jumper H5 <- AMP23 Pin 12 (A13B)
 #ifdef bladeOffsetBtn
