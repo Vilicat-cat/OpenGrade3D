@@ -53,11 +53,11 @@ bool invertBladeOffset = false;
 #endif
 #else  //AiO v4.5 // pin numbers not set yet
 
-#define DIR_ENABLE 6     //PD4 cytron dir
-#define PWM_OUT 4        //PD3  cytron pwm
-#define LOCK_PIN 5       //LOCK output
+#define DIR_ENABLE 4     //PD4 cytron dir
+#define PWM_OUT 3        //PD3  cytron pwm
+#define LOCK_PIN 2       //LOCK output
 #define AUTOMODE_PIN 32  //this pin must be low (to ground) to activate automode IMP on PCB --the AiOv4 steerPin
-#define LEVER_UP A10     // first axle --to AiOv4 pressure pin
+#define LEVER_UP A13     // first axle --to AiOv4 Pin A13 (Teensy Pin 27) <- Jumper H5 <- AMP23 Pin 12 (A13B)
 #ifdef bladeOffsetBtn
 #define BOFFUP_PIN 0  //signal (to GND) to move the blade offset up 1 cm?
 #define BOFFDW_PIN 0  //offset down
@@ -67,10 +67,10 @@ bool invertBladeOffset = false;
 #endif
 //leds
 #ifdef useLEDs
-#define LED_DW 0    //led down (if used)
-#define LED_UP 0    //led up (if used)
-#define LED_AUTO 0  //led auto
-#define LED_ON 0    //on led
+#define LED_DW 12    //led down Pin 12 (AS_ACT) para indicador de modo automático
+#define LED_UP 38    //led up D38 disponible en cabezal para LED SUBIR
+#define LED_AUTO 26  //led auto D26 disponible en cabezal para LED BAJAR
+#define LED_ON 5    //on led
 #endif
 #endif
 //----------------------------------------------------------
@@ -238,6 +238,7 @@ void setup() {
 #else
 	pinMode(DIR_ENABLE, OUTPUT);
 	pinMode(PWM_OUT, OUTPUT);
+	digitalWrite(LOCK_PIN, LOW); // Bloqueado al inicio
 	analogWriteFrequency(PWM_OUT, 100);  // 4482 hz max (FlexPWM)
 #endif
 	//keep pulled high and drag low to activate, noise free safe
@@ -624,6 +625,13 @@ void udpMessageRecv(int sizeToRead) {
 }  //end udp callback
 
 void SetPWM(void) {
+
+if (pwmDrive > 0 || (!workSwitch && autoEnable)) {
+    digitalWrite(LOCK_PIN, HIGH);
+} else {
+    digitalWrite(LOCK_PIN, LOW);
+}
+	
 	int32_t leverCenterDeadbandUnder = leverUpCenterValue - joystickVerDeadband;
 	int32_t leverCenterDeadbandAbove = leverUpCenterValue + joystickVerDeadband;
 	if (workSwitch) autoEnable = true;                                // if auto switch is tourned off turn on AutoEnable for the next time auto switch will be turned on
