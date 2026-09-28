@@ -238,6 +238,7 @@ void setup() {
 #else
 	pinMode(DIR_ENABLE, OUTPUT);
 	pinMode(PWM_OUT, OUTPUT);
+	pinMode(LOCK_PIN, OUTPUT);
 	digitalWrite(LOCK_PIN, LOW); // Bloqueado al inicio
 	analogWriteFrequency(PWM_OUT, 100);  // 4482 hz max (FlexPWM)
 #endif
@@ -626,11 +627,7 @@ void udpMessageRecv(int sizeToRead) {
 
 void SetPWM(void) {
 
-if (pwmDrive > 0 || (!workSwitch && autoEnable)) {
-    digitalWrite(LOCK_PIN, HIGH);
-} else {
-    digitalWrite(LOCK_PIN, LOW);
-}
+
 	
 	int32_t leverCenterDeadbandUnder = leverUpCenterValue - joystickVerDeadband;
 	int32_t leverCenterDeadbandAbove = leverUpCenterValue + joystickVerDeadband;
@@ -740,6 +737,13 @@ if (pwmDrive > 0 || (!workSwitch && autoEnable)) {
 		analogWrite(PWM_1, 0);
 	}
 #else  //AiO v4.5
+	
+	if (pwmDrive > 0 || (!workSwitch && autoEnable)) {
+    digitalWrite(LOCK_PIN, HIGH);
+    } else {
+    digitalWrite(LOCK_PIN, LOW);
+    }
+	
 	if (pwmValue < 0)                    // lowering the blade
 	{
 		digitalWrite(DIR_ENABLE, HIGH);
