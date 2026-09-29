@@ -265,8 +265,20 @@ void setup() {
     pinMode(Ethernet_Active_LED, OUTPUT);
     pinMode(GPSRED_LED, OUTPUT);
     pinMode(GPSGREEN_LED, OUTPUT);
+
+
+	// Estado inicial apagado
+	digitalWrite(LED_DW, LOW);
+	digitalWrite(LED_UP, LOW);
+	digitalWrite(LED_AUTO, LOW);
+	digitalWrite(LED_ON, LOW);
+	digitalWrite(GGAReceivedLED, LOW);
+	digitalWrite(Ethernet_Active_LED, LOW);
+	digitalWrite(GPSRED_LED, LOW);
+	digitalWrite(GPSGREEN_LED, LOW);
+	
 #endif
-	   
+		   
 	//set up communication
 
 	Serial.begin(115200);
@@ -486,6 +498,75 @@ void loop() {
 			SetPWM();
 			SendUDPbladeData();
 
+#ifdef useLEDs
+	// Ethernet link status
+	if (Ethernet.linkStatus() == LinkON) {
+		digitalWrite(Ethernet_Active_LED, HIGH);
+	} else {
+		digitalWrite(Ethernet_Active_LED, LOW);
+	}
+
+	// GGA received recently?
+	// dataGNSSrecieved counts up when no valid GNSS message is seen.
+	// If it's small, we have recent GNSS.
+	if (dataGNSSrecieved < 90) {
+		digitalWrite(GGAReceivedLED, HIGH);
+	} else {
+		digitalWrite(GGAReceivedLED, LOW);
+	}
+
+	// GPS fix status
+	// fixTypeGGA from NMEA parser:
+	// 0 = invalid
+	// 1 = GPS fix
+	// 2 = DGPS
+	// 3 = PPS
+	// 4 = RTK fixed
+	// 5 = RTK float
+	// 6 = estimated
+	bool gpsValid = (fixTypeGGA >= 1 && fixTypeGGA <= 6);
+	bool rtkFix = (fixTypeGGA == 4 || fixTypeGGA == 5);
+
+	if (!gpsValid) {
+		digitalWrite(GPSRED_LED, HIGH);
+		digitalWrite(GPSGREEN_LED, LOW);
+	} else if (rtkFix) {
+		digitalWrite(GPSRED_LED, LOW);
+		digitalWrite(GPSGREEN_LED, HIGH);
+	} else {
+		digitalWrite(GPSRED_LED, HIGH);
+		digitalWrite(GPSGREEN_LED, LOW);
+	}
+#endif
+
+#ifdef useLEDs
+			if (settingsRecieved) {
+				digitalWrite(LED_ON, HIGH);
+				onLedTime = 0;
+			} else {
+				if (onLedTime > 19) onLedTime = 0;
+				if (onLedTime < 11) digitalWrite(LED_ON, HIGH);
+				else digitalWrite(LED_ON, LOW);
+				onLedTime++;
+			}
+
+			// auto LED settings
+			if (workSwitch == 0) {
+				if (autoEnable) {
+					digitalWrite(LED_AUTO, HIGH);
+					autoLedTime = 0;
+				} else {
+					if (autoLedTime > 7) autoLedTime = 0;
+					if (autoLedTime > 3) digitalWrite(LED_AUTO, HIGH);
+					else digitalWrite(LED_AUTO, LOW);
+					autoLedTime++;
+				}
+			} else {
+				digitalWrite(LED_AUTO, LOW);
+				autoLedTime = 0;
+			}
+#endif
+			
 #ifdef useLEDs
 			if (pwmValue < 0) {
 				digitalWrite(LED_DW, HIGH);  // lowering the blade
