@@ -266,8 +266,6 @@ void setup() {
     pinMode(GPSRED_LED, OUTPUT);
     pinMode(GPSGREEN_LED, OUTPUT);
 
-
-	// Estado inicial apagado
 	digitalWrite(LED_DW, LOW);
 	digitalWrite(LED_UP, LOW);
 	digitalWrite(LED_AUTO, LOW);
@@ -276,9 +274,8 @@ void setup() {
 	digitalWrite(Ethernet_Active_LED, LOW);
 	digitalWrite(GPSRED_LED, LOW);
 	digitalWrite(GPSGREEN_LED, LOW);
-	
 #endif
-		   
+	   
 	//set up communication
 
 	Serial.begin(115200);
@@ -437,6 +434,35 @@ void loop() {
 				digitalWrite(LED_AUTO, LOW);
 				autoLedTime = 0;
 			}
+
+			// Ethernet link status
+			if (Ethernet.linkStatus() == LinkON) {
+				digitalWrite(Ethernet_Active_LED, HIGH);
+			} else {
+				digitalWrite(Ethernet_Active_LED, LOW);
+			}
+
+			// GGA received recently
+			if (dataGNSSrecieved < 90) {
+				digitalWrite(GGAReceivedLED, HIGH);
+			} else {
+				digitalWrite(GGAReceivedLED, LOW);
+			}
+
+			// GPS fix status
+			bool gpsValid = (fixTypeGGA >= 1 && fixTypeGGA <= 6);
+			bool rtkFix = (fixTypeGGA == 4 || fixTypeGGA == 5);
+
+			if (!gpsValid) {
+				digitalWrite(GPSRED_LED, HIGH);
+				digitalWrite(GPSGREEN_LED, LOW);
+			} else if (rtkFix) {
+				digitalWrite(GPSRED_LED, LOW);
+				digitalWrite(GPSGREEN_LED, HIGH);
+			} else {
+				digitalWrite(GPSRED_LED, HIGH);
+				digitalWrite(GPSGREEN_LED, LOW);
+			}
 #endif
 			//safety - turn off if confused
 			if (watchdogTimer > 140) {
@@ -499,84 +525,13 @@ void loop() {
 			SendUDPbladeData();
 
 #ifdef useLEDs
-	// Ethernet link status
-	if (Ethernet.linkStatus() == LinkON) {
-		digitalWrite(Ethernet_Active_LED, HIGH);
-	} else {
-		digitalWrite(Ethernet_Active_LED, LOW);
-	}
-
-	// GGA received recently?
-	// dataGNSSrecieved counts up when no valid GNSS message is seen.
-	// If it's small, we have recent GNSS.
-	if (dataGNSSrecieved < 90) {
-		digitalWrite(GGAReceivedLED, HIGH);
-	} else {
-		digitalWrite(GGAReceivedLED, LOW);
-	}
-
-	// GPS fix status
-	// fixTypeGGA from NMEA parser:
-	// 0 = invalid
-	// 1 = GPS fix
-	// 2 = DGPS
-	// 3 = PPS
-	// 4 = RTK fixed
-	// 5 = RTK float
-	// 6 = estimated
-	bool gpsValid = (fixTypeGGA >= 1 && fixTypeGGA <= 6);
-	bool rtkFix = (fixTypeGGA == 4 || fixTypeGGA == 5);
-
-	if (!gpsValid) {
-		digitalWrite(GPSRED_LED, HIGH);
-		digitalWrite(GPSGREEN_LED, LOW);
-	} else if (rtkFix) {
-		digitalWrite(GPSRED_LED, LOW);
-		digitalWrite(GPSGREEN_LED, HIGH);
-	} else {
-		digitalWrite(GPSRED_LED, HIGH);
-		digitalWrite(GPSGREEN_LED, LOW);
-	}
-#endif
-
-#ifdef useLEDs
-			if (settingsRecieved) {
-				digitalWrite(LED_ON, HIGH);
-				onLedTime = 0;
-			} else {
-				if (onLedTime > 19) onLedTime = 0;
-				if (onLedTime < 11) digitalWrite(LED_ON, HIGH);
-				else digitalWrite(LED_ON, LOW);
-				onLedTime++;
-			}
-
-			// auto LED settings
-			if (workSwitch == 0) {
-				if (autoEnable) {
-					digitalWrite(LED_AUTO, HIGH);
-					autoLedTime = 0;
-				} else {
-					if (autoLedTime > 7) autoLedTime = 0;
-					if (autoLedTime > 3) digitalWrite(LED_AUTO, HIGH);
-					else digitalWrite(LED_AUTO, LOW);
-					autoLedTime++;
-				}
-			} else {
-				digitalWrite(LED_AUTO, LOW);
-				autoLedTime = 0;
-			}
-#endif
-			
-#ifdef useLEDs
 			if (pwmValue < 0) {
 				digitalWrite(LED_DW, HIGH);  // lowering the blade
 				digitalWrite(LED_UP, LOW);
-			}
-			if (pwmValue > 0) {
+			} else if (pwmValue > 0) {
 				digitalWrite(LED_UP, HIGH);  // lift the blade
 				digitalWrite(LED_DW, LOW);
-			}
-			if (pwmValue == 0) {
+			} else {
 				digitalWrite(LED_UP, LOW);
 				digitalWrite(LED_DW, LOW);
 			}
@@ -637,7 +592,7 @@ void udpMessageRecv(int sizeToRead) {
 				if (udpData[4] == 3 && udpData[5] == 202 && udpData[6] == 202) {
 					//hello from AgIO
 					uint8_t scanReply[] = { 128, 129, 126, 203, 7,
-						                      ip[0], ip[1], ip[2], 155, src_ip[0], src_ip[1], src_ip[2], 23 };
+											ip[0], ip[1], ip[2], 155, src_ip[0], src_ip[1], src_ip[2], 23 };
 
 					//checksum
 					int16_t CK_A = 0;
