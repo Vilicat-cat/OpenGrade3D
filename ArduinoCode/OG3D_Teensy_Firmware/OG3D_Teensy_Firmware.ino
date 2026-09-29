@@ -67,10 +67,6 @@ bool invertBladeOffset = false;
 #endif
 //leds
 #ifdef useLEDs
-#define GGAReceivedLED 13         //Teensy onboard LED
-#define Ethernet_Active_LED 6     //Green
-#define GPSRED_LED 9              //Red (Flashing = NO IMU or Dual, ON = GPS fix with IMU)
-#define GPSGREEN_LED 10           //Green (Flashing = Dual bad, ON = Dual good)
 #define LED_DW 27    //led down 
 #define LED_UP 38    //led up 
 #define LED_AUTO 36  //led auto 
@@ -261,11 +257,7 @@ void setup() {
 	pinMode(LED_UP, OUTPUT);
 	pinMode(LED_AUTO, OUTPUT);
 	pinMode(LED_ON, OUTPUT);
-	pinMode(GGAReceivedLED, OUTPUT);
-    pinMode(Ethernet_Active_LED, OUTPUT);
-    pinMode(GPSRED_LED, OUTPUT);
-    pinMode(GPSGREEN_LED, OUTPUT);
-   
+	   
 	//set up communication
 
 	Serial.begin(115200);
