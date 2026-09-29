@@ -257,6 +257,7 @@ void setup() {
 	pinMode(LED_UP, OUTPUT);
 	pinMode(LED_AUTO, OUTPUT);
 	pinMode(LED_ON, OUTPUT);
+#endif
 	   
 	//set up communication
 
