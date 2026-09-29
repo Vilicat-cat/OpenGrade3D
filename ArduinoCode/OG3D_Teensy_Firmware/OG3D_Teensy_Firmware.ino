@@ -71,6 +71,10 @@ bool invertBladeOffset = false;
 #define LED_UP 38    //led up 
 #define LED_AUTO 36  //led auto 
 #define LED_ON 5    //on led
+#define GGAReceivedLED 13         //Teensy onboard LED
+#define Ethernet_Active_LED 6     //Green
+#define GPSRED_LED 9              //Red (on)
+#define GPSGREEN_LED 10           //Green (rtk)
 #endif
 #endif
 //----------------------------------------------------------
@@ -257,6 +261,10 @@ void setup() {
 	pinMode(LED_UP, OUTPUT);
 	pinMode(LED_AUTO, OUTPUT);
 	pinMode(LED_ON, OUTPUT);
+	pinMode(GGAReceivedLED, OUTPUT);
+    pinMode(Ethernet_Active_LED, OUTPUT);
+    pinMode(GPSRED_LED, OUTPUT);
+    pinMode(GPSGREEN_LED, OUTPUT);
 #endif
 	   
 	//set up communication
