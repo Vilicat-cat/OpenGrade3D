@@ -1,9 +1,9 @@
 /* 
- 4 Feb 2021, Brian Tischler
- Like all Arduino code - copied from somewhere else :)
- So don't claim it as your own
+  4 Feb 2021, Brian Tischler
+  Like all Arduino code - copied from somewhere else :)
+  So don't claim it as your own
 Changes by Pat
- */
+  */
 //----------------------------------------------------------
 
 // it can also be used with the AIO
@@ -347,10 +347,15 @@ void setup() {
 	{
 #ifdef isAllInOneBoardProto
 		LEDs.set(LED_ID::PWR_ETH, PWR_ETH_STATE::ETH_READY);
+#else
+		// v4.5 uses the normal Ethernet UDP driver; no proto-only LED driver is present here.
+		Serial.println(F("AIO v4.5 Ethernet UDP ready"));
 #endif
 	} else {
 #ifdef isAllInOneBoardProto
 		LEDs.set(LED_ID::PWR_ETH, PWR_ETH_STATE::NO_ETH);
+#else
+		Serial.println(F("AIO v4.5 Ethernet UDP not ready"));
 #endif
 	}
 	GPS_setup();
@@ -361,6 +366,9 @@ void setup() {
 	LEDs.set(LED_ID::STEER, STEER_STATE::AUTOSTEER_READY);
 	LEDs.updateLoop();
 #else  //v4.5
+	// This branch is intentionally active for the v4.5 board.
+	// The v4.5 firmware uses the standard GPIO/UDP path instead of the proto-only LED driver.
+	Serial.println(F("AIO v4.5 path selected"));
 #endif
 
 	Serial.print(inoVersion);
@@ -592,7 +600,7 @@ void udpMessageRecv(int sizeToRead) {
 				if (udpData[4] == 3 && udpData[5] == 202 && udpData[6] == 202) {
 					//hello from AgIO
 					uint8_t scanReply[] = { 128, 129, 126, 203, 7,
-											ip[0], ip[1], ip[2], 155, src_ip[0], src_ip[1], src_ip[2], 23 };
+										ip[0], ip[1], ip[2], 155, src_ip[0], src_ip[1], src_ip[2], 23 };
 
 					//checksum
 					int16_t CK_A = 0;
