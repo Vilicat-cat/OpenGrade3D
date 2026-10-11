@@ -113,8 +113,9 @@ struct ConfigIP {
 	uint8_t ipOne = 192;
 	uint8_t ipTwo = 168;
 	uint8_t ipThree = 5;
+	uint8_t ipFour = 155;  // fixed local IP for Teensy module
 };
-ConfigIP networkAddress;  //3 bytes
+ConfigIP networkAddress;  //4 bytes
 
 // Module IP Address / Port
 IPAddress ip = { 0, 0, 0, 155 };
@@ -122,7 +123,8 @@ unsigned int localPort = 8888;
 unsigned int NtripPort = 2233;
 
 // AOG IP Address / Port
-static uint8_t ipDestination[] = { 0, 0, 0, 255 };
+// Use an actual AgIO PC IP on the same LAN. Do not leave the destination incomplete.
+static uint8_t ipDestination[] = { 192, 168, 5, 10 };
 unsigned int AOGPort = 9999;
 
 //MAC address
@@ -330,15 +332,26 @@ void setup() {
 	ip[0] = networkAddress.ipOne;
 	ip[1] = networkAddress.ipTwo;
 	ip[2] = networkAddress.ipThree;
+	ip[3] = networkAddress.ipFour;
 
 	ipDestination[0] = networkAddress.ipOne;
 	ipDestination[1] = networkAddress.ipTwo;
 	ipDestination[2] = networkAddress.ipThree;
+	ipDestination[3] = 10;  // Fixed to the AgIO PC IP on the same subnet
 
 	Ethernet.setLocalIP(ip);  // Change IP address to IP set by user
 	Serial.println("\r\nEthernet status OK");
 	Serial.print("IP set Manually: ");
 	Serial.println(Ethernet.localIP());
+
+	Serial.print("Destination IP: ");
+	Serial.print(ipDestination[0]);
+	Serial.print(".");
+	Serial.print(ipDestination[1]);
+	Serial.print(".");
+	Serial.print(ipDestination[2]);
+	Serial.print(".");
+	Serial.println(ipDestination[3]);
 
 	// Udp.begin(localPort);
 	NtripUdp.begin(NtripPort);
@@ -587,6 +600,7 @@ void udpMessageRecv(int sizeToRead) {
 					networkAddress.ipOne = udpData[7];
 					networkAddress.ipTwo = udpData[8];
 					networkAddress.ipThree = udpData[9];
+					networkAddress.ipFour = udpData[10];
 
 					//save in EEPROM and restart
 					EEPROM.put(60, networkAddress);
@@ -600,7 +614,7 @@ void udpMessageRecv(int sizeToRead) {
 				if (udpData[4] == 3 && udpData[5] == 202 && udpData[6] == 202) {
 					//hello from AgIO
 					uint8_t scanReply[] = { 128, 129, 126, 203, 7,
-										ip[0], ip[1], ip[2], 155, src_ip[0], src_ip[1], src_ip[2], 23 };
+										ip[0], ip[1], ip[2], ip[3], src_ip[0], src_ip[1], src_ip[2], src_ip[3] };
 
 					//checksum
 					int16_t CK_A = 0;
@@ -638,6 +652,12 @@ void udpMessageRecv(int sizeToRead) {
 
 					Serial.println(inoVersion);
 					Serial.println();
+
+					// Update the destination to the actual AgIO IP discovered on the LAN
+					ipDestination[0] = src_ip[0];
+					ipDestination[1] = src_ip[1];
+					ipDestination[2] = src_ip[2];
+					ipDestination[3] = src_ip[3];
 				}
 			}  // end 202
 		}    //end 7F
@@ -859,7 +879,7 @@ void ReadFromEEPROM() {
 		pwmMaxDw = 2880;
 		integralMultiplier = 20;
 		deadband = 5;
-		networkAddress = { 192, 168, 5 };
+		networkAddress = { 192, 168, 5, 155 };
 	}
 }
 
