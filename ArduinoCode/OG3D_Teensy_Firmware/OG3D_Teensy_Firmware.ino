@@ -1,9 +1,9 @@
 /* 
-  4 Feb 2021, Brian Tischler
-  Like all Arduino code - copied from somewhere else :)
-  So don't claim it as your own
+ 4 Feb 2021, Brian Tischler
+ Like all Arduino code - copied from somewhere else :)
+ So don't claim it as your own
 Changes by Pat
-  */
+ */
 //----------------------------------------------------------
 
 // it can also be used with the AIO
@@ -14,7 +14,7 @@ Changes by Pat
 // uncomment the following line if you're using pins for blade offset
 //#define bladeOffsetPropLever
 //#define bladeOffsetBtn
-//#define useLEDs  // LEDs using four outputs, do not use: not implemented
+#define useLEDs  // LEDs using four outputs, do not use: not implemented
 //User set variables
 //PWM or relay mode
 int32_t joystickVerDeadband = 30;     // the deadband from center to the point it gives a moving signal, the 0-5V range is 0-1023
@@ -67,9 +67,9 @@ bool invertBladeOffset = false;
 #endif
 //leds
 #ifdef useLEDs
-#define LED_DW 27    //led down -- A13B
-#define LED_UP 38    //led auto -- A14B
-#define LED_AUTO 36  //led down -- Speed+
+#define LED_DW 36   //led down (if used)
+#define LED_UP 27    //led up (if used)
+#define LED_AUTO 38  //led auto
 #define LED_ON 5    //on led
 #define GGAReceivedLED 13         //Teensy onboard LED
 #define Ethernet_Active_LED 6     //Green
@@ -113,9 +113,8 @@ struct ConfigIP {
 	uint8_t ipOne = 192;
 	uint8_t ipTwo = 168;
 	uint8_t ipThree = 5;
-	uint8_t ipFour = 155;  // fixed local IP for Teensy module
 };
-ConfigIP networkAddress;  //4 bytes
+ConfigIP networkAddress;  //3 bytes
 
 // Module IP Address / Port
 IPAddress ip = { 0, 0, 0, 155 };
@@ -123,8 +122,7 @@ unsigned int localPort = 8888;
 unsigned int NtripPort = 2233;
 
 // AOG IP Address / Port
-// Use an actual AgIO PC IP on the same LAN. Do not leave the destination incomplete.
-static uint8_t ipDestination[] = { 192, 168, 5, 10 };
+static uint8_t ipDestination[] = { 0, 0, 0, 255 };
 unsigned int AOGPort = 9999;
 
 //MAC address
@@ -245,7 +243,7 @@ void setup() {
 	pinMode(DIR_ENABLE, OUTPUT);
 	pinMode(PWM_OUT, OUTPUT);
 	pinMode(LOCK_PIN, OUTPUT);
-	digitalWrite(LOCK_PIN, LOW); // Bloqueado al inicio
+	digitalWrite(LOCK_PIN, LOW); // Block at start
 	analogWriteFrequency(PWM_OUT, 100);  // 4482 hz max (FlexPWM)
 #endif
 	//keep pulled high and drag low to activate, noise free safe
@@ -264,9 +262,9 @@ void setup() {
 	pinMode(LED_AUTO, OUTPUT);
 	pinMode(LED_ON, OUTPUT);
 	pinMode(GGAReceivedLED, OUTPUT);
-    pinMode(Ethernet_Active_LED, OUTPUT);
-    pinMode(GPSRED_LED, OUTPUT);
-    pinMode(GPSGREEN_LED, OUTPUT);
+  pinMode(Ethernet_Active_LED, OUTPUT);
+  pinMode(GPSRED_LED, OUTPUT);
+  pinMode(GPSGREEN_LED, OUTPUT);
 
 	digitalWrite(LED_DW, LOW);
 	digitalWrite(LED_UP, LOW);
@@ -277,7 +275,6 @@ void setup() {
 	digitalWrite(GPSRED_LED, LOW);
 	digitalWrite(GPSGREEN_LED, LOW);
 #endif
-	   
 	//set up communication
 
 	Serial.begin(115200);
@@ -332,26 +329,15 @@ void setup() {
 	ip[0] = networkAddress.ipOne;
 	ip[1] = networkAddress.ipTwo;
 	ip[2] = networkAddress.ipThree;
-	ip[3] = networkAddress.ipFour;
 
 	ipDestination[0] = networkAddress.ipOne;
 	ipDestination[1] = networkAddress.ipTwo;
 	ipDestination[2] = networkAddress.ipThree;
-	ipDestination[3] = 10;  // Fixed to the AgIO PC IP on the same subnet
 
 	Ethernet.setLocalIP(ip);  // Change IP address to IP set by user
 	Serial.println("\r\nEthernet status OK");
 	Serial.print("IP set Manually: ");
 	Serial.println(Ethernet.localIP());
-
-	Serial.print("Destination IP: ");
-	Serial.print(ipDestination[0]);
-	Serial.print(".");
-	Serial.print(ipDestination[1]);
-	Serial.print(".");
-	Serial.print(ipDestination[2]);
-	Serial.print(".");
-	Serial.println(ipDestination[3]);
 
 	// Udp.begin(localPort);
 	NtripUdp.begin(NtripPort);
@@ -361,7 +347,7 @@ void setup() {
 #ifdef isAllInOneBoardProto
 		LEDs.set(LED_ID::PWR_ETH, PWR_ETH_STATE::ETH_READY);
 #else
-		// v4.5 uses the normal Ethernet UDP driver; no proto-only LED driver is present here.
+// v4.5 uses the normal Ethernet UDP driver; no proto-only LED driver is present here.
 		Serial.println(F("AIO v4.5 Ethernet UDP ready"));
 #endif
 	} else {
@@ -379,7 +365,7 @@ void setup() {
 	LEDs.set(LED_ID::STEER, STEER_STATE::AUTOSTEER_READY);
 	LEDs.updateLoop();
 #else  //v4.5
-	// This branch is intentionally active for the v4.5 board.
+  // This branch is intentionally active for the v4.5 board.
 	// The v4.5 firmware uses the standard GPIO/UDP path instead of the proto-only LED driver.
 	Serial.println(F("AIO v4.5 path selected"));
 #endif
@@ -428,15 +414,16 @@ void loop() {
 
 // On LED settings
 #ifdef useLEDs
-			if (settingsRecieved) {
-				digitalWrite(LED_ON, HIGH);
-				onLedTime = 0;
-			} else {
-				if (onLedTime > 19) onLedTime = 0;
-				if (onLedTime < 11) digitalWrite(LED_ON, HIGH);
-				else digitalWrite(LED_ON, LOW);
-				onLedTime++;
-			}
+			 if (Ethernet.linkStatus() == LinkOFF) 
+  {
+    digitalWrite(LED_ON,  HIGH);
+    digitalWrite(Ethernet_Active_LED, LOW);
+  }
+  if (Ethernet.linkStatus() == LinkON) 
+  {
+    digitalWrite(LED_ON, LOW);
+    digitalWrite(Ethernet_Active_LED, 1);
+  }
 
 			// auto LED settings
 			if (workSwitch == 0)  // Auto mode
@@ -456,7 +443,7 @@ void loop() {
 				autoLedTime = 0;
 			}
 
-			// Ethernet link status
+// Ethernet link status
 			if (Ethernet.linkStatus() == LinkON) {
 				digitalWrite(Ethernet_Active_LED, HIGH);
 			} else {
@@ -485,6 +472,7 @@ void loop() {
 				digitalWrite(GPSGREEN_LED, LOW);
 			}
 #endif
+
 			//safety - turn off if confused
 			if (watchdogTimer > 140) {
 				workSwitch = 1;
@@ -549,10 +537,12 @@ void loop() {
 			if (pwmValue < 0) {
 				digitalWrite(LED_DW, HIGH);  // lowering the blade
 				digitalWrite(LED_UP, LOW);
-			} else if (pwmValue > 0) {
+			}
+			if (pwmValue > 0) {
 				digitalWrite(LED_UP, HIGH);  // lift the blade
 				digitalWrite(LED_DW, LOW);
-			} else {
+			}
+			if (pwmValue == 0) {
 				digitalWrite(LED_UP, LOW);
 				digitalWrite(LED_DW, LOW);
 			}
@@ -600,7 +590,6 @@ void udpMessageRecv(int sizeToRead) {
 					networkAddress.ipOne = udpData[7];
 					networkAddress.ipTwo = udpData[8];
 					networkAddress.ipThree = udpData[9];
-					networkAddress.ipFour = udpData[10];
 
 					//save in EEPROM and restart
 					EEPROM.put(60, networkAddress);
@@ -614,7 +603,7 @@ void udpMessageRecv(int sizeToRead) {
 				if (udpData[4] == 3 && udpData[5] == 202 && udpData[6] == 202) {
 					//hello from AgIO
 					uint8_t scanReply[] = { 128, 129, 126, 203, 7,
-										ip[0], ip[1], ip[2], ip[3], src_ip[0], src_ip[1], src_ip[2], src_ip[3] };
+						                      ip[0], ip[1], ip[2], 155, src_ip[0], src_ip[1], src_ip[2], 23 };
 
 					//checksum
 					int16_t CK_A = 0;
@@ -652,12 +641,6 @@ void udpMessageRecv(int sizeToRead) {
 
 					Serial.println(inoVersion);
 					Serial.println();
-
-					// Update the destination to the actual AgIO IP discovered on the LAN
-					ipDestination[0] = src_ip[0];
-					ipDestination[1] = src_ip[1];
-					ipDestination[2] = src_ip[2];
-					ipDestination[3] = src_ip[3];
 				}
 			}  // end 202
 		}    //end 7F
@@ -699,9 +682,6 @@ void udpMessageRecv(int sizeToRead) {
 }  //end udp callback
 
 void SetPWM(void) {
-
-
-	
 	int32_t leverCenterDeadbandUnder = leverUpCenterValue - joystickVerDeadband;
 	int32_t leverCenterDeadbandAbove = leverUpCenterValue + joystickVerDeadband;
 	if (workSwitch) autoEnable = true;                                // if auto switch is tourned off turn on AutoEnable for the next time auto switch will be turned on
@@ -810,13 +790,13 @@ void SetPWM(void) {
 		analogWrite(PWM_1, 0);
 	}
 #else  //AiO v4.5
-	
+
 	if (pwmDrive > 0 || (!workSwitch && autoEnable)) {
     digitalWrite(LOCK_PIN, HIGH);
     } else {
     digitalWrite(LOCK_PIN, LOW);
     }
-	
+		
 	if (pwmValue < 0)                    // lowering the blade
 	{
 		digitalWrite(DIR_ENABLE, HIGH);
@@ -879,7 +859,7 @@ void ReadFromEEPROM() {
 		pwmMaxDw = 2880;
 		integralMultiplier = 20;
 		deadband = 5;
-		networkAddress = { 192, 168, 5, 155 };
+		networkAddress = { 192, 168, 5 };
 	}
 }
 
