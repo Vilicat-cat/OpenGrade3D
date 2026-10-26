@@ -67,9 +67,9 @@ bool invertBladeOffset = false;
 #endif
 //leds
 #ifdef useLEDs
-#define LED_DW 36   //led down (if used)
-#define LED_UP 27    //led up (if used)
-#define LED_AUTO 38  //led auto
+#define LED_DW 38   //led down 
+#define LED_UP 27    //led up 
+#define LED_AUTO 36  //led auto -- Reverse logic for SpeedPuLse, HIGH it's off, LOW it's ON 
 #define LED_ON 5    //on led
 #define GGAReceivedLED 13         //Teensy onboard LED
 #define Ethernet_Active_LED 6     //Green
@@ -259,12 +259,12 @@ void setup() {
 #ifdef useLEDs
 	pinMode(LED_DW, OUTPUT);
 	pinMode(LED_UP, OUTPUT);
-	pinMode(LED_AUTO, OUTPUT);
+	digitalWrite(LED_AUTO, HIGH); // Reverse logic for SpeedPuLse, HIGH it's off, LOW it's ON
 	pinMode(LED_ON, OUTPUT);
 	pinMode(GGAReceivedLED, OUTPUT);
-  pinMode(Ethernet_Active_LED, OUTPUT);
-  pinMode(GPSRED_LED, OUTPUT);
-  pinMode(GPSGREEN_LED, OUTPUT);
+    pinMode(Ethernet_Active_LED, OUTPUT);
+    pinMode(GPSRED_LED, OUTPUT);
+    pinMode(GPSGREEN_LED, OUTPUT);
 
 	digitalWrite(LED_DW, LOW);
 	digitalWrite(LED_UP, LOW);
@@ -425,21 +425,21 @@ void loop() {
     digitalWrite(Ethernet_Active_LED, 1);
   }
 
-			// auto LED settings
-			if (workSwitch == 0)  // Auto mode
+// auto LED settings
+			if (workSwitch == 0)  // Auto mode -- Reverse logic for SpeedPuLse, HIGH it's off, LOW it's ON 
 			{
 
 				if (autoEnable) {
-					digitalWrite(LED_AUTO, HIGH);
+					digitalWrite(LED_AUTO, LOW);
 					autoLedTime = 0;
 				} else {
 					if (autoLedTime > 7) autoLedTime = 0;
-					if (autoLedTime > 3) digitalWrite(LED_AUTO, HIGH);
-					else digitalWrite(LED_AUTO, LOW);
+					if (autoLedTime > 3) digitalWrite(LED_AUTO, LOW);
+					else digitalWrite(LED_AUTO, HIGH);
 					autoLedTime++;
 				}
 			} else {
-				digitalWrite(LED_AUTO, LOW);
+				digitalWrite(LED_AUTO, HIGH);
 				autoLedTime = 0;
 			}
 
@@ -457,7 +457,7 @@ void loop() {
 				digitalWrite(GGAReceivedLED, LOW);
 			}
 
-			// GPS fix status
+// GPS fix status
 			bool gpsValid = (fixTypeGGA >= 1 && fixTypeGGA <= 6);
 			bool rtkFix = (fixTypeGGA == 4 || fixTypeGGA == 5);
 
@@ -473,7 +473,7 @@ void loop() {
 			}
 #endif
 
-			//safety - turn off if confused
+//safety - turn off if confused
 			if (watchdogTimer > 140) {
 				workSwitch = 1;
 				cutValve = 100;
