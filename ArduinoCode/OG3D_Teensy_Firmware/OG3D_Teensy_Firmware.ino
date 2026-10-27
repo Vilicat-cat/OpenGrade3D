@@ -24,7 +24,7 @@ bool proportionalValve = true;
 bool workButton = true;  // true for momentary button, false for switch(continus)
 //proportional lever
 bool manualMovePropLever = true;  //if a lever for manual operation is installed
-bool invertManMove = false;
+bool invertManMove = true;
 // blade off set choose betwen lever or btn or none.
 bool invertBladeOffset = false;
 //PWM or relay mode
