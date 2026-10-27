@@ -57,7 +57,7 @@ bool invertBladeOffset = false;
 #define PWM_OUT 2        //PD3  cytron pwm
 #define LOCK_PIN 3       //LOCK output
 #define AUTOMODE_PIN 32  //this pin must be low (to ground) to activate automode IMP on PCB --the AiOv4 steerPin
-#define LEVER_UP A10     // first axle --to AiOv4 pressure pin
+#define LEVER_UP A10     // first axle --to AiOv4 pressure pin -- Jumper H16 Pressure
 #ifdef bladeOffsetBtn
 #define BOFFUP_PIN 0  //signal (to GND) to move the blade offset up 1 cm?
 #define BOFFDW_PIN 0  //offset down
@@ -69,7 +69,7 @@ bool invertBladeOffset = false;
 #ifdef useLEDs
 #define LED_DW 38   //led down 
 #define LED_UP 27    //led up 
-#define LED_AUTO 36  //led auto -- Reverse logic for SpeedPuLse, HIGH it's off, LOW it's ON 
+#define LED_AUTO 36  //led auto -- Reverse logic for SpeedPuLse, HIGH it's off, LOW it's ON -- Jumper H11 Closed (GND to Speed-) and Jumper H23 12V
 #define LED_ON 5    //on led
 #define GGAReceivedLED 13         //Teensy onboard LED
 #define Ethernet_Active_LED 6     //Green
