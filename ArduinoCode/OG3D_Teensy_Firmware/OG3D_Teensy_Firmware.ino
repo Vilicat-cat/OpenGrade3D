@@ -5,6 +5,15 @@
 Changes by Pat
  */
 //----------------------------------------------------------
+// PARCHES APLICADOS (2026-10-31) - detalle en CAMBIOS_PARCHES.md:
+//   1) Failsafe GNSS en SetPWM (neutro si la altura GNSS queda obsoleta)
+//   2) Verificacion de CRC en tramas entrantes 0xBA/0xB8 + cota objetivo acotada
+//   3) Autodeteccion del GPS probando varios baudios
+//   4) Heartbeat hacia AgIO reactivado
+//   5) Hemisferios corregidos en pivotLat/pivotLon + limpieza de codigo muerto
+//   7) Compilacion multi-.ino robusta: OG3D_Globals.h (ver CAMBIOS_PARCHES.md)
+//   8) Telemetria por UDP: PGN 0x6A/0xE2 (27362) visible en el monitor UDP de AgIO
+//----------------------------------------------------------
 
 // it can also be used with the AIO
 // uncomment the following line if you're using the All-In-One-Board (proto v5)
@@ -14,17 +23,23 @@ Changes by Pat
 // uncomment the following line if you're using pins for blade offset
 //#define bladeOffsetPropLever
 //#define bladeOffsetBtn
-//#define useLEDs  // LEDs using four outputs, do not use: not implemented
+#define useLEDs  // LEDs using four outputs, do not use: not implemented
+
+// Parche 2: verificacion de CRC en las tramas entrantes (0x61/0xBA y 0x61/0xB8).
+// Ponlo a 0 SOLO si tu version de la app OG3D no envia CRC en estas tramas.
+#ifndef VERIFY_INCOMING_CRC
+#define VERIFY_INCOMING_CRC 1
+#endif
 //User set variables
 //PWM or relay mode
-int32_t joystickVerDeadband = 80;     // the deadband from center to the point it gives a moving signal, the 0-5V range is 0-1023
-int32_t joystickVerUpperLimit = 750;  // the point were automode will kick in again, typically pretty high, when you command the valve down fast.
+int32_t joystickVerDeadband = 30;     // the deadband from center to the point it gives a moving signal, the 0-5V range is 0-1023
+int32_t joystickVerUpperLimit = 700;  // the point were automode will kick in again, typically pretty high, when you command the valve down fast.
 bool proportionalValve = true;
 //workswitch or work button
 bool workButton = true;  // true for momentary button, false for switch(continus)
 //proportional lever
 bool manualMovePropLever = true;  //if a lever for manual operation is installed
-bool invertManMove = false;
+bool invertManMove = true;
 // blade off set choose betwen lever or btn or none.
 bool invertBladeOffset = false;
 //PWM or relay mode
@@ -53,11 +68,11 @@ bool invertBladeOffset = false;
 #endif
 #else  //AiO v4.5 // pin numbers not set yet
 
-#define DIR_ENABLE 6     //PD4 cytron dir
-#define PWM_OUT 4        //PD3  cytron pwm
-#define LOCK_PIN 5       //LOCK output
+#define DIR_ENABLE 4     //PD4 cytron dir
+#define PWM_OUT 2        //PD3  cytron pwm
+#define LOCK_PIN 3       //LOCK output
 #define AUTOMODE_PIN 32  //this pin must be low (to ground) to activate automode IMP on PCB --the AiOv4 steerPin
-#define LEVER_UP A10     // first axle --to AiOv4 pressure pin
+#define LEVER_UP A10     // first axle --to AiOv4 pressure pin -- Jumper H16 Pressure
 #ifdef bladeOffsetBtn
 #define BOFFUP_PIN 0  //signal (to GND) to move the blade offset up 1 cm?
 #define BOFFDW_PIN 0  //offset down
@@ -67,17 +82,21 @@ bool invertBladeOffset = false;
 #endif
 //leds
 #ifdef useLEDs
-#define LED_DW 0    //led down (if used)
-#define LED_UP 0    //led up (if used)
-#define LED_AUTO 0  //led auto
-#define LED_ON 0    //on led
+#define LED_DW 38   //led down 
+#define LED_UP 27    //led up 
+#define LED_AUTO 36  //led auto -- Reverse logic for SpeedPuLse, HIGH it's off, LOW it's ON -- Jumper H11 Closed (GND to Speed-) and Jumper H23 12V
+#define LED_ON 5    //on led
+#define GGAReceivedLED 13         //Teensy onboard LED
+#define Ethernet_Active_LED 6     //Green
+#define GPSRED_LED 9              //Red (on)
+#define GPSGREEN_LED 10           //Green (rtk)
 #endif
 #endif
 //----------------------------------------------------------
 #ifdef isAllInOneBoardProto
-String inoVersion = ("\r\nOG3D Ver 2026.09.15 (AIO v5 Proto PCB))");
+String inoVersion = ("\r\nOG3D Ver 2026.09.15 (AIO v5 Proto PCB)");
 #else  //AiO v4.5
-String inoVersion = ("\r\nOG3D Ver 2026.09.15 (AIO v4 PCB))");
+String inoVersion = ("\r\nOG3D Ver 2026.09.15 (AIO v4 PCB)");
 #endif
 
 // if not in eeprom, overwrite
@@ -86,6 +105,7 @@ String inoVersion = ("\r\nOG3D Ver 2026.09.15 (AIO v4 PCB))");
 #include <Wire.h>
 #include <EEPROM.h>
 #include "zNMEAParser.h"
+#include "OG3D_Globals.h"  // Parche 7: declaraciones compartidas entre archivos .ino
 #ifdef isAllInOneBoardProto
 #include <Adafruit_PWMServoDriver.h>
 Adafruit_PWMServoDriver outputs = Adafruit_PWMServoDriver(0x44);  //the section and lock driver
@@ -93,8 +113,8 @@ Adafruit_PWMServoDriver outputs = Adafruit_PWMServoDriver(0x44);  //the section 
 #include "LEDS.h"
 LEDS LEDs = LEDS(1000, 255, 64, 127);  // 1000ms RGB update, 255/64/127 RGB brightness balance levels for v5.0a
 #endif
-/* A parser is declared with 5 handlers at most */
-NMEAParser<5> parser;
+/* A parser is declared with 3 handlers at most */
+NMEAParser<3> parser;
 
 //Used to set CPU speed
 extern "C" uint32_t set_arm_clock(uint32_t frequency);  // required prototype
@@ -118,7 +138,7 @@ unsigned int localPort = 8888;
 unsigned int NtripPort = 2233;
 
 // AOG IP Address / Port
-static uint8_t ipDestination[] = { 0, 0, 0, 255 };
+uint8_t ipDestination[] = { 0, 0, 0, 255 };  // sin static: declarado extern en OG3D_Globals.h (Parche 7)
 unsigned int AOGPort = 9999;
 
 //MAC address
@@ -165,9 +185,30 @@ float hdopGGA, rtkAgeGGA;
 uint8_t helloAgIO[] = { 0x80, 0x81, 0x7f, 0xC7, 1, 0, 0x47 };
 uint32_t helloCounter = 0;
 
-//Heart beat hello AgIO - v5.6
-uint8_t helloFromAutoSteer[] = { 128, 129, 126, 126, 5, 0, 0, 0, 0, 0, 71 };
-int16_t helloSteerPosition = 0;
+// Parche 8: telemetria por UDP hacia AgIO (PGN 0x6A/0xE2 = 27362), 5 Hz por defecto.
+// Misma familia que OG3D[] (0x6A/0xE1): sale por ipDestination:TELEM_PORT (9999 por defecto)
+// y AgIO la muestra
+// en su monitor UDP (PGN + IP de origen) sin interpretarla como dato.
+#define SEND_UDP_TELEMETRY 1  // 0 = desactiva la telemetria por completo
+const uint16_t TELEM_MS = 200;  // periodo de envio en ms (200 = 5 Hz)
+const uint16_t TELEM_PORT = 9998;  // puerto destino de la telemetria: 9999 = el mismo de AgIO/OG3D.
+// Cambialo (p.ej. 9998) si quieres escucharla con Packet Sender en el MISMO PC donde corre AgIO
+// (un puerto UDP solo lo puede abrir un programa a la vez; en otro equipo, deja 9999).
+uint32_t lastTelemMs = 0;
+// [0..1] 0x80 0x81 | [2] 0x6A | [3] 0xE2 | [4] len=34 | [5..38] payload | [39] CRC
+uint8_t TELEM[] = {
+        0x80, 0x81, 0x6a, 0xe2, 34,
+        0, 0, 0, 0,  //  5: fixQualityOG, satNbrOG, fixTypeGGA, flags
+        0, 0, 0, 0,  //  9: hdopOG x100 (u16), speedOG x100 (u16)
+        0, 0, 0, 0,  // 13: edad GGA ms (u16), watchdogTimer (u16)
+        0, 0, 0, 0,  // 17: altitudeOG mm (i32)
+        0, 0, 0, 0,  // 21: targetAltitude mm (i32)
+        0, 0, 0, 0,  // 25: cutValve (u16), pwmValue (i16, con signo)
+        0, 0, 0, 0,  // 29: gpsBaud (u32)
+        0, 0, 0, 0,  // 33: uptime s (u32)
+        0, 0,        // 37: version del formato (=1), reservado
+        0xCC         // 39: CRC (se recalcula en cada envio)
+};
 
 //from OG3D board to OG3D 6A E1 -
 uint8_t OG3D[] = { 0x80, 0x81, 0x6a, 0xe1, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC };
@@ -175,10 +216,8 @@ int16_t OG3DSize = sizeof(OG3D);
 
 //GNSS sent to OG3D
 uint8_t GNSS1[] = { 0x80, 0x81, 0x6a, 0xd1, 42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC };
-int8_t GNSS1_Size = sizeof(GNSS1);
-
-int64_t longitudeOG = 20000000000000, latitudeOG = 20000000000000;                                                                          // x 1000 000 000
-int32_t altitudeOG = 21000000;                                                                                                    //mm
+int64_t longitudeOG = 200000000, latitudeOG = 200000000;                                                                          // x 1000 000 000
+int32_t altitudeOG = 20000000;                                                                                                    //mm
 uint16_t dualHeadingOG = 40000, singleHeadingOG = 40000, imuHeadingOG = 40000;                                                    // x 100
 int16_t dualRollOG = 32000, imuRollOG = 32000, imuPitchOG = 32000, imuYawRateOG = 32000, speedOG = 32000, hdopOG = 0, ageOG = 0;  // x100, km/h x 100,
 uint8_t fixQualityOG = 0, satNbrOG = 0;
@@ -192,6 +231,11 @@ bool workSwitch = true;  //high is circuit open, low is switch grounded
 bool autoEnable = false;
 bool settingsRecieved = false;
 int32_t dataGNSSrecieved = 180;
+// Parche 1: edad maxima de la altura GNSS. Si la ultima GGA es mas antigua que esto,
+// la altura se considera obsoleta y el control automatico pasa a neutro.
+// 600 ms cubre GGA a 2 Hz o mas rapidas.
+const uint32_t GNSS_FRESH_MS = 600;
+uint32_t lastGGAms = 0;  // millis() de la ultima GGA recibida (se fija en GGA_Handler)
 byte multipleValue = 0;
 //pwm variables
 byte integralMultiplier = 0;
@@ -199,7 +243,6 @@ int32_t pwmGainUp = 0, pwmMinUp = 0, pwmGainDw = 0, pwmMinDw = 0, pwmMaxUp = 0, 
 int32_t pwmDrive = 0, pwmValue = 0;
 int32_t pwmValueCalc = 0;
 int32_t lastCutValve = 100;
-float pwmHist = 0;
 
 //AutoControl switch button  ***********************************************************************************************************
 byte currentState = 1;
@@ -238,6 +281,8 @@ void setup() {
 #else
 	pinMode(DIR_ENABLE, OUTPUT);
 	pinMode(PWM_OUT, OUTPUT);
+	pinMode(LOCK_PIN, OUTPUT);
+	digitalWrite(LOCK_PIN, LOW); // Block at start
 	analogWriteFrequency(PWM_OUT, 100);  // 4482 hz max (FlexPWM)
 #endif
 	//keep pulled high and drag low to activate, noise free safe
@@ -250,11 +295,24 @@ void setup() {
 #ifdef bladeOffsetPropLever
 	pinMode(LEVER_SIDE, INPUT_DISABLE);
 #endif
-#ifdef useLEDs
+#if defined(useLEDs) && !defined(isAllInOneBoardProto)  // Parche: LEDs GPIO = placa AiO v4.5 (la v5 usa PCA9685)
 	pinMode(LED_DW, OUTPUT);
 	pinMode(LED_UP, OUTPUT);
-	pinMode(LED_AUTO, OUTPUT);
+	digitalWrite(LED_AUTO, HIGH); // Reverse logic for SpeedPuLse, HIGH it's off, LOW it's ON
 	pinMode(LED_ON, OUTPUT);
+	pinMode(GGAReceivedLED, OUTPUT);
+    pinMode(Ethernet_Active_LED, OUTPUT);
+    pinMode(GPSRED_LED, OUTPUT);
+    pinMode(GPSGREEN_LED, OUTPUT);
+
+	digitalWrite(LED_DW, LOW);
+	digitalWrite(LED_UP, LOW);
+	digitalWrite(LED_AUTO, HIGH);  // Parche: logica invertida, HIGH = apagado al arrancar
+	digitalWrite(LED_ON, LOW);
+	digitalWrite(GGAReceivedLED, LOW);
+	digitalWrite(Ethernet_Active_LED, LOW);
+	digitalWrite(GPSRED_LED, LOW);
+	digitalWrite(GPSGREEN_LED, LOW);
 #endif
 	//set up communication
 
@@ -327,10 +385,15 @@ void setup() {
 	{
 #ifdef isAllInOneBoardProto
 		LEDs.set(LED_ID::PWR_ETH, PWR_ETH_STATE::ETH_READY);
+#else
+// v4.5 uses the normal Ethernet UDP driver; no proto-only LED driver is present here.
+		Serial.println(F("AIO v4.5 Ethernet UDP ready"));
 #endif
 	} else {
 #ifdef isAllInOneBoardProto
 		LEDs.set(LED_ID::PWR_ETH, PWR_ETH_STATE::NO_ETH);
+#else
+		Serial.println(F("AIO v4.5 Ethernet UDP not ready"));
 #endif
 	}
 	GPS_setup();
@@ -341,6 +404,9 @@ void setup() {
 	LEDs.set(LED_ID::STEER, STEER_STATE::AUTOSTEER_READY);
 	LEDs.updateLoop();
 #else  //v4.5
+  // This branch is intentionally active for the v4.5 board.
+	// The v4.5 firmware uses the standard GPIO/UDP path instead of the proto-only LED driver.
+	Serial.println(F("AIO v4.5 path selected"));
 #endif
 
 	Serial.print(inoVersion);
@@ -385,37 +451,59 @@ void loop() {
 			if (dataGNSSrecieved <= 100) dataGNSSrecieved = 100;
 			loopTimer = 0;
 
-// On LED settings
-#ifdef useLEDs
-			if (settingsRecieved) {
-				digitalWrite(LED_ON, HIGH);
-				onLedTime = 0;
+// On LED settings (parche: estado del enlace consolidado; se elimino el bloque duplicado de mas abajo)
+// Parche 0k: los LEDs GPIO de estado solo existen en la placa AiO v4.5
+#if defined(useLEDs) && !defined(isAllInOneBoardProto)
+			if (Ethernet.linkStatus() == LinkON) {
+				digitalWrite(LED_ON, LOW);  // logica invertida: LOW = encendido
+				digitalWrite(Ethernet_Active_LED, HIGH);
 			} else {
-				if (onLedTime > 19) onLedTime = 0;
-				if (onLedTime < 11) digitalWrite(LED_ON, HIGH);
-				else digitalWrite(LED_ON, LOW);
-				onLedTime++;
+				digitalWrite(LED_ON, HIGH);
+				digitalWrite(Ethernet_Active_LED, LOW);
 			}
 
-			// auto LED settings
-			if (workSwitch == 0)  // Auto mode
+// auto LED settings
+			if (workSwitch == 0)  // Auto mode -- Reverse logic for SpeedPuLse, HIGH it's off, LOW it's ON 
 			{
 
 				if (autoEnable) {
-					digitalWrite(LED_AUTO, HIGH);
+					digitalWrite(LED_AUTO, LOW);
 					autoLedTime = 0;
 				} else {
 					if (autoLedTime > 7) autoLedTime = 0;
-					if (autoLedTime > 3) digitalWrite(LED_AUTO, HIGH);
-					else digitalWrite(LED_AUTO, LOW);
+					if (autoLedTime > 3) digitalWrite(LED_AUTO, LOW);
+					else digitalWrite(LED_AUTO, HIGH);
 					autoLedTime++;
 				}
 			} else {
-				digitalWrite(LED_AUTO, LOW);
+				digitalWrite(LED_AUTO, HIGH);
 				autoLedTime = 0;
 			}
+
+			// GGA received recently
+			if (dataGNSSrecieved < 90) {
+				digitalWrite(GGAReceivedLED, HIGH);
+			} else {
+				digitalWrite(GGAReceivedLED, LOW);
+			}
+
+// GPS fix status
+			bool gpsValid = (fixTypeGGA >= 1 && fixTypeGGA <= 6);
+			bool rtkFix = (fixTypeGGA == 4 || fixTypeGGA == 5);
+
+			if (!gpsValid) {
+				digitalWrite(GPSRED_LED, HIGH);
+				digitalWrite(GPSGREEN_LED, LOW);
+			} else if (rtkFix) {
+				digitalWrite(GPSRED_LED, LOW);
+				digitalWrite(GPSGREEN_LED, HIGH);
+			} else {
+				digitalWrite(GPSRED_LED, HIGH);
+				digitalWrite(GPSGREEN_LED, LOW);
+			}
 #endif
-			//safety - turn off if confused
+
+//safety - turn off if confused
 			if (watchdogTimer > 140) {
 				workSwitch = 1;
 				cutValve = 100;
@@ -490,15 +578,20 @@ void loop() {
 			}
 #endif
 		}
-		/*
-		//send empty pgn to AgIO to show activity
+		//send empty pgn to AgIO to show activity (parche 4: reactivado, ~1 Hz)
 		if (++helloCounter > 200) {
 			Udp.beginPacket(ipDestination, AOGPort);
 			Udp.write(helloAgIO, sizeof(helloAgIO));
 			Udp.endPacket();
 			helloCounter = 0;
 		}
-		*/
+		// Parche 8: telemetria por UDP (PGN 0x6A/0xE2) para el monitor UDP de AgIO
+#if SEND_UDP_TELEMETRY
+		if (millis() - lastTelemMs >= TELEM_MS) {
+			lastTelemMs = millis();
+			sendTelemetry();
+		}
+#endif
 	}  //end of main timed loop
 
 	//This runs continuously, outside of the timed loop, keeps checking for new udpData, etc
@@ -517,6 +610,20 @@ void loop() {
 }  // end of main loop
 
 //********************************************************************************
+
+// Parche 2: verifica el CRC (suma de bytes) de una trama entrante 0x80 0x81.
+// Formato igual al de las tramas que envia este modulo:
+// [0..1] 0x80 0x81 | [2] src | [3] PGN | [4] longitud payload | [5..4+len] payload | [5+len] CRC
+bool validChecksum(byte *inData, int packetSize) {
+	byte len = inData[4];
+	if (len > 120) return false;                  // no cabe en udpData[128]
+	if (packetSize < (int)len + 6) return false;  // paquete truncado
+	uint8_t crc = 0;
+	for (uint8_t i = 2; i < 5 + (uint8_t)len; i++) {
+		crc += inData[i];
+	}
+	return (crc == inData[5 + (uint8_t)len]);
+}
 
 void udpMessageRecv(int sizeToRead) {
 	if (sizeToRead > 128) sizeToRead = 128;
@@ -589,23 +696,36 @@ void udpMessageRecv(int sizeToRead) {
 		else if (udpData[2] == 0x61) {
 			if (udpData[3] == 0xBA)  //data from OG3D
 			{
+				//Data recieved, 0x61, 0xBA, 8, targetAltitude(32bits), cutValveReceived, bladeOffsetIn, not used, not used, CRC
+				if (udpData[4] != 8) return;  // longitud de payload inesperada
+#if VERIFY_INCOMING_CRC
+				if (!validChecksum(udpData, sizeToRead)) return;  // paquete corrupto: se descarta
+#endif
 #ifdef isAllInOneBoardProto
 				LEDs.set(LED_ID::PWR_ETH, PWR_ETH_STATE::AGIO_CONNECTED);
 #endif
-				//Data recieved, 0x61, 0xBA, 8, targetAltitude(32bits), cutValveReceived, bladeOffsetIn, not used, not used, CRC
 				//reset watchdog
 				watchdogTimer = 0;
 				// Extract 32-bit signed target altitude starting at index 5 (Bytes 5, 6, 7, 8)
 				memcpy(&targetAltitude, &udpData[5], sizeof(int32_t));
+
+				// Parche 2: acota la cota objetivo a un rango fisico razonable (-1000 m .. +22000 m).
+				// Los valores >= 20000000 son el centinela "sin objetivo" (modo manual) y se respetan.
+				if (targetAltitude < -1000000) targetAltitude = -1000000;
+				if (targetAltitude > 22000000) targetAltitude = 22000000;
 
 				// Extract remaining payload single-byte indices
 				cutValveReceived = udpData[9];
 				bladeOffsetIn = udpData[10];
 				// udpData[11] -> not used
 				// udpData[12] -> not used
-				// udpData[13] -> Incoming CRC , not verified
+				// udpData[13] -> CRC (verificado arriba)
 			} else if (udpData[3] == 0xB8)  //settings from OG3D
 			{
+				if (udpData[4] != 8) return;  // longitud de payload inesperada
+#if VERIFY_INCOMING_CRC
+				if (!validChecksum(udpData, sizeToRead)) return;  // paquete corrupto: no se toca la EEPROM
+#endif
 				digitalWrite(13, HIGH);
 				pwmGainUp = (int32_t)udpData[5] << 2;
 				pwmGainDw = (int32_t)udpData[6] << 2;
@@ -634,8 +754,14 @@ void SetPWM(void) {
 
 	//Use the GNSS height is available
 	if (targetAltitude < 20000000) {
-		// reel minus target plus 100. 100 is on target, <100 is too low, lift, >100 is too high, lower
-		cutValve = (uint8_t)constrain(altitudeOG - targetAltitude + 100, 1, 199);
+		// FAILSAFE GNSS (parche 1): si la ultima GGA es demasiado antigua, altitudeOG ya
+		// no es valido y NO se debe actuar sobre el: se fuerza el neutro aunque haya objetivo.
+		if (millis() - lastGGAms < GNSS_FRESH_MS) {
+			// reel minus target plus 100. 100 is on target, <100 is too low, lift, >100 is too high, lower
+			cutValve = (uint8_t)constrain(altitudeOG - targetAltitude + 100, 0, 200);
+		} else {
+			cutValve = 100;  // neutro: ni subir ni bajar hasta tener altura fresca
+		}
 	} else cutValve = cutValveReceived;
 
 	if (!workSwitch && autoEnable)  // Auto mode
@@ -732,6 +858,13 @@ void SetPWM(void) {
 		analogWrite(PWM_1, 0);
 	}
 #else  //AiO v4.5
+
+	if (pwmDrive > 0 || (!workSwitch && autoEnable)) {
+    digitalWrite(LOCK_PIN, HIGH);
+    } else {
+    digitalWrite(LOCK_PIN, LOW);
+    }
+		
 	if (pwmValue < 0)                    // lowering the blade
 	{
 		digitalWrite(DIR_ENABLE, HIGH);
@@ -814,7 +947,7 @@ void SendUDPbladeData() {
 	OG3D[9] = (uint8_t)(leverUpValue >> 2);
 	OG3D[10] = leverSideValue;
 	OG3D[11] = 0;  // Not used / Padding slot
-	OG3D[12] = pwmHist;
+	OG3D[12] = 0;  // reservado (antes pwmHist; nunca se calculaba)
 
 	// 3. Fast CRC checksum calculation over the global frame indexes
 	uint8_t calculatedCrc = 0;
@@ -828,3 +961,63 @@ void SendUDPbladeData() {
 	Udp.write(OG3D, 14);  // We pass 14 bytes explicitly
 	Udp.endPacket();
 }
+
+//------------------------------------------------------------------------------
+// Parche 8: rellena y envia la telemetria (PGN 0x6A/0xE2) a ipDestination:TELEM_PORT
+// Formato y CRC identicos al resto de tramas del modulo. Payload (34 bytes,
+// little-endian): detalle completo en CAMBIOS_PARCHES.md (Parche 8).
+//------------------------------------------------------------------------------
+static inline void putU16(uint8_t *p, uint16_t v) {
+	p[0] = (uint8_t)(v & 0xFF);
+	p[1] = (uint8_t)(v >> 8);
+}
+
+static inline void putU32(uint8_t *p, uint32_t v) {
+	p[0] = (uint8_t)(v & 0xFF);
+	p[1] = (uint8_t)((v >> 8) & 0xFF);
+	p[2] = (uint8_t)((v >> 16) & 0xFF);
+	p[3] = (uint8_t)(v >> 24);
+}
+
+#if SEND_UDP_TELEMETRY
+void sendTelemetry() {
+	uint32_t ggaAge = millis() - lastGGAms;
+	if (ggaAge > 0xFFFF) ggaAge = 0xFFFF;
+
+	TELEM[5] = fixQualityOG;
+	TELEM[6] = satNbrOG;
+	TELEM[7] = fixTypeGGA;
+
+	uint8_t flags = 0;
+	if (workSwitch) flags |= (1 << 0);        // b0: 1 = manual / seguro
+	if (autoEnable) flags |= (1 << 1);        // b1: auto habilitado
+	if (pwmValue > 0) flags |= (1 << 2);      // b2: ordenando subir
+	if (pwmValue < 0) flags |= (1 << 3);      // b3: ordenando bajar
+	if (millis() - lastGGAms < GNSS_FRESH_MS) flags |= (1 << 4);  // b4: GNSS fresco (Parche 1)
+	if (settingsRecieved) flags |= (1 << 5);  // b5: ajustes 0xB8 recibidos
+	TELEM[8] = flags;
+
+	putU16(&TELEM[9], (uint16_t)hdopOG);
+	putU16(&TELEM[11], (uint16_t)speedOG);
+	putU16(&TELEM[13], (uint16_t)ggaAge);
+	putU16(&TELEM[15], (uint16_t)watchdogTimer);
+	putU32(&TELEM[17], (uint32_t)altitudeOG);
+	putU32(&TELEM[21], (uint32_t)targetAltitude);
+	putU16(&TELEM[25], (uint16_t)cutValve);
+	putU16(&TELEM[27], (uint16_t)pwmValue);
+	putU32(&TELEM[29], gpsBaud);
+	putU32(&TELEM[33], millis() / 1000);
+	TELEM[37] = 1;  // version del formato de telemetria
+	TELEM[38] = 0;  // reservado
+
+	uint8_t crc = 0;
+	for (uint8_t i = 2; i < 5 + TELEM[4]; i++) {
+		crc += TELEM[i];
+	}
+	TELEM[39] = crc;
+
+	Udp.beginPacket(ipDestination, TELEM_PORT);
+	Udp.write(TELEM, sizeof(TELEM));
+	Udp.endPacket();
+}
+#endif  // SEND_UDP_TELEMETRY

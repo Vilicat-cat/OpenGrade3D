@@ -1,0 +1,780 @@
+--- a/OG3D_Teensy_Firmware.ino
++++ b/OG3D_Teensy_Firmware.ino
+@@ -4,6 +4,15 @@
+  So don't claim it as your own
+ Changes by Pat
+  */
++//----------------------------------------------------------
++// PARCHES APLICADOS (2026-10-31) - detalle en CAMBIOS_PARCHES.md:
++//   1) Failsafe GNSS en SetPWM (neutro si la altura GNSS queda obsoleta)
++//   2) Verificacion de CRC en tramas entrantes 0xBA/0xB8 + cota objetivo acotada
++//   3) Autodeteccion del GPS probando varios baudios
++//   4) Heartbeat hacia AgIO reactivado
++//   5) Hemisferios corregidos en pivotLat/pivotLon + limpieza de codigo muerto
++//   7) Compilacion multi-.ino robusta: OG3D_Globals.h (ver CAMBIOS_PARCHES.md)
++//   8) Telemetria por UDP: PGN 0x6A/0xE2 (27362) visible en el monitor UDP de AgIO
+ //----------------------------------------------------------
+ 
+ // it can also be used with the AIO
+@@ -15,6 +24,12 @@
+ //#define bladeOffsetPropLever
+ //#define bladeOffsetBtn
+ #define useLEDs  // LEDs using four outputs, do not use: not implemented
++
++// Parche 2: verificacion de CRC en las tramas entrantes (0x61/0xBA y 0x61/0xB8).
++// Ponlo a 0 SOLO si tu version de la app OG3D no envia CRC en estas tramas.
++#ifndef VERIFY_INCOMING_CRC
++#define VERIFY_INCOMING_CRC 1
++#endif
+ //User set variables
+ //PWM or relay mode
+ int32_t joystickVerDeadband = 30;     // the deadband from center to the point it gives a moving signal, the 0-5V range is 0-1023
+@@ -79,9 +94,9 @@
+ #endif
+ //----------------------------------------------------------
+ #ifdef isAllInOneBoardProto
+-String inoVersion = ("\r\nOG3D Ver 2026.09.15 (AIO v5 Proto PCB))");
++String inoVersion = ("\r\nOG3D Ver 2026.09.15 (AIO v5 Proto PCB)");
+ #else  //AiO v4.5
+-String inoVersion = ("\r\nOG3D Ver 2026.09.15 (AIO v4 PCB))");
++String inoVersion = ("\r\nOG3D Ver 2026.09.15 (AIO v4 PCB)");
+ #endif
+ 
+ // if not in eeprom, overwrite
+@@ -90,6 +105,7 @@
+ #include <Wire.h>
+ #include <EEPROM.h>
+ #include "zNMEAParser.h"
++#include "OG3D_Globals.h"  // Parche 7: declaraciones compartidas entre archivos .ino
+ #ifdef isAllInOneBoardProto
+ #include <Adafruit_PWMServoDriver.h>
+ Adafruit_PWMServoDriver outputs = Adafruit_PWMServoDriver(0x44);  //the section and lock driver
+@@ -122,7 +138,7 @@
+ unsigned int NtripPort = 2233;
+ 
+ // AOG IP Address / Port
+-static uint8_t ipDestination[] = { 0, 0, 0, 255 };
++uint8_t ipDestination[] = { 0, 0, 0, 255 };  // sin static: declarado extern en OG3D_Globals.h (Parche 7)
+ unsigned int AOGPort = 9999;
+ 
+ //MAC address
+@@ -169,9 +185,30 @@
+ uint8_t helloAgIO[] = { 0x80, 0x81, 0x7f, 0xC7, 1, 0, 0x47 };
+ uint32_t helloCounter = 0;
+ 
+-//Heart beat hello AgIO - v5.6
+-uint8_t helloFromAutoSteer[] = { 128, 129, 126, 126, 5, 0, 0, 0, 0, 0, 71 };
+-int16_t helloSteerPosition = 0;
++// Parche 8: telemetria por UDP hacia AgIO (PGN 0x6A/0xE2 = 27362), 5 Hz por defecto.
++// Misma familia que OG3D[] (0x6A/0xE1): sale por ipDestination:TELEM_PORT (9999 por defecto)
++// y AgIO la muestra
++// en su monitor UDP (PGN + IP de origen) sin interpretarla como dato.
++#define SEND_UDP_TELEMETRY 1  // 0 = desactiva la telemetria por completo
++const uint16_t TELEM_MS = 200;  // periodo de envio en ms (200 = 5 Hz)
++const uint16_t TELEM_PORT = 9999;  // puerto destino de la telemetria: 9999 = el mismo de AgIO/OG3D.
++// Cambialo (p.ej. 9998) si quieres escucharla con Packet Sender en el MISMO PC donde corre AgIO
++// (un puerto UDP solo lo puede abrir un programa a la vez; en otro equipo, deja 9999).
++uint32_t lastTelemMs = 0;
++// [0..1] 0x80 0x81 | [2] 0x6A | [3] 0xE2 | [4] len=34 | [5..38] payload | [39] CRC
++uint8_t TELEM[] = {
++        0x80, 0x81, 0x6a, 0xe2, 34,
++        0, 0, 0, 0,  //  5: fixQualityOG, satNbrOG, fixTypeGGA, flags
++        0, 0, 0, 0,  //  9: hdopOG x100 (u16), speedOG x100 (u16)
++        0, 0, 0, 0,  // 13: edad GGA ms (u16), watchdogTimer (u16)
++        0, 0, 0, 0,  // 17: altitudeOG mm (i32)
++        0, 0, 0, 0,  // 21: targetAltitude mm (i32)
++        0, 0, 0, 0,  // 25: cutValve (u16), pwmValue (i16, con signo)
++        0, 0, 0, 0,  // 29: gpsBaud (u32)
++        0, 0, 0, 0,  // 33: uptime s (u32)
++        0, 0,        // 37: version del formato (=1), reservado
++        0xCC         // 39: CRC (se recalcula en cada envio)
++};
+ 
+ //from OG3D board to OG3D 6A E1 -
+ uint8_t OG3D[] = { 0x80, 0x81, 0x6a, 0xe1, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC };
+@@ -179,8 +216,6 @@
+ 
+ //GNSS sent to OG3D
+ uint8_t GNSS1[] = { 0x80, 0x81, 0x6a, 0xd1, 42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC };
+-int8_t GNSS1_Size = sizeof(GNSS1);
+-
+ int64_t longitudeOG = 200000000, latitudeOG = 200000000;                                                                          // x 1000 000 000
+ int32_t altitudeOG = 20000000;                                                                                                    //mm
+ uint16_t dualHeadingOG = 40000, singleHeadingOG = 40000, imuHeadingOG = 40000;                                                    // x 100
+@@ -196,6 +231,11 @@
+ bool autoEnable = false;
+ bool settingsRecieved = false;
+ int32_t dataGNSSrecieved = 180;
++// Parche 1: edad maxima de la altura GNSS. Si la ultima GGA es mas antigua que esto,
++// la altura se considera obsoleta y el control automatico pasa a neutro.
++// 600 ms cubre GGA a 2 Hz o mas rapidas.
++const uint32_t GNSS_FRESH_MS = 600;
++uint32_t lastGGAms = 0;  // millis() de la ultima GGA recibida (se fija en GGA_Handler)
+ byte multipleValue = 0;
+ //pwm variables
+ byte integralMultiplier = 0;
+@@ -203,7 +243,6 @@
+ int32_t pwmDrive = 0, pwmValue = 0;
+ int32_t pwmValueCalc = 0;
+ int32_t lastCutValve = 100;
+-float pwmHist = 0;
+ 
+ //AutoControl switch button  ***********************************************************************************************************
+ byte currentState = 1;
+@@ -256,7 +295,7 @@
+ #ifdef bladeOffsetPropLever
+ 	pinMode(LEVER_SIDE, INPUT_DISABLE);
+ #endif
+-#ifdef useLEDs
++#if defined(useLEDs) && !defined(isAllInOneBoardProto)  // Parche: LEDs GPIO = placa AiO v4.5 (la v5 usa PCA9685)
+ 	pinMode(LED_DW, OUTPUT);
+ 	pinMode(LED_UP, OUTPUT);
+ 	digitalWrite(LED_AUTO, HIGH); // Reverse logic for SpeedPuLse, HIGH it's off, LOW it's ON
+@@ -268,7 +307,7 @@
+ 
+ 	digitalWrite(LED_DW, LOW);
+ 	digitalWrite(LED_UP, LOW);
+-	digitalWrite(LED_AUTO, LOW);
++	digitalWrite(LED_AUTO, HIGH);  // Parche: logica invertida, HIGH = apagado al arrancar
+ 	digitalWrite(LED_ON, LOW);
+ 	digitalWrite(GGAReceivedLED, LOW);
+ 	digitalWrite(Ethernet_Active_LED, LOW);
+@@ -412,18 +451,16 @@
+ 			if (dataGNSSrecieved <= 100) dataGNSSrecieved = 100;
+ 			loopTimer = 0;
+ 
+-// On LED settings
+-#ifdef useLEDs
+-			 if (Ethernet.linkStatus() == LinkOFF) 
+-  {
+-    digitalWrite(LED_ON,  HIGH);
+-    digitalWrite(Ethernet_Active_LED, LOW);
+-  }
+-  if (Ethernet.linkStatus() == LinkON) 
+-  {
+-    digitalWrite(LED_ON, LOW);
+-    digitalWrite(Ethernet_Active_LED, 1);
+-  }
++// On LED settings (parche: estado del enlace consolidado; se elimino el bloque duplicado de mas abajo)
++// Parche 0k: los LEDs GPIO de estado solo existen en la placa AiO v4.5
++#if defined(useLEDs) && !defined(isAllInOneBoardProto)
++			if (Ethernet.linkStatus() == LinkON) {
++				digitalWrite(LED_ON, LOW);  // logica invertida: LOW = encendido
++				digitalWrite(Ethernet_Active_LED, HIGH);
++			} else {
++				digitalWrite(LED_ON, HIGH);
++				digitalWrite(Ethernet_Active_LED, LOW);
++			}
+ 
+ // auto LED settings
+ 			if (workSwitch == 0)  // Auto mode -- Reverse logic for SpeedPuLse, HIGH it's off, LOW it's ON 
+@@ -443,13 +480,6 @@
+ 				autoLedTime = 0;
+ 			}
+ 
+-// Ethernet link status
+-			if (Ethernet.linkStatus() == LinkON) {
+-				digitalWrite(Ethernet_Active_LED, HIGH);
+-			} else {
+-				digitalWrite(Ethernet_Active_LED, LOW);
+-			}
+-
+ 			// GGA received recently
+ 			if (dataGNSSrecieved < 90) {
+ 				digitalWrite(GGAReceivedLED, HIGH);
+@@ -548,15 +578,20 @@
+ 			}
+ #endif
+ 		}
+-		/*
+-		//send empty pgn to AgIO to show activity
++		//send empty pgn to AgIO to show activity (parche 4: reactivado, ~1 Hz)
+ 		if (++helloCounter > 200) {
+ 			Udp.beginPacket(ipDestination, AOGPort);
+ 			Udp.write(helloAgIO, sizeof(helloAgIO));
+ 			Udp.endPacket();
+ 			helloCounter = 0;
+ 		}
+-		*/
++		// Parche 8: telemetria por UDP (PGN 0x6A/0xE2) para el monitor UDP de AgIO
++#if SEND_UDP_TELEMETRY
++		if (millis() - lastTelemMs >= TELEM_MS) {
++			lastTelemMs = millis();
++			sendTelemetry();
++		}
++#endif
+ 	}  //end of main timed loop
+ 
+ 	//This runs continuously, outside of the timed loop, keeps checking for new udpData, etc
+@@ -575,6 +610,20 @@
+ }  // end of main loop
+ 
+ //********************************************************************************
++
++// Parche 2: verifica el CRC (suma de bytes) de una trama entrante 0x80 0x81.
++// Formato igual al de las tramas que envia este modulo:
++// [0..1] 0x80 0x81 | [2] src | [3] PGN | [4] longitud payload | [5..4+len] payload | [5+len] CRC
++bool validChecksum(byte *inData, int packetSize) {
++	byte len = inData[4];
++	if (len > 120) return false;                  // no cabe en udpData[128]
++	if (packetSize < (int)len + 6) return false;  // paquete truncado
++	uint8_t crc = 0;
++	for (uint8_t i = 2; i < 5 + (uint8_t)len; i++) {
++		crc += inData[i];
++	}
++	return (crc == inData[5 + (uint8_t)len]);
++}
+ 
+ void udpMessageRecv(int sizeToRead) {
+ 	if (sizeToRead > 128) sizeToRead = 128;
+@@ -647,23 +696,36 @@
+ 		else if (udpData[2] == 0x61) {
+ 			if (udpData[3] == 0xBA)  //data from OG3D
+ 			{
++				//Data recieved, 0x61, 0xBA, 8, targetAltitude(32bits), cutValveReceived, bladeOffsetIn, not used, not used, CRC
++				if (udpData[4] != 8) return;  // longitud de payload inesperada
++#if VERIFY_INCOMING_CRC
++				if (!validChecksum(udpData, sizeToRead)) return;  // paquete corrupto: se descarta
++#endif
+ #ifdef isAllInOneBoardProto
+ 				LEDs.set(LED_ID::PWR_ETH, PWR_ETH_STATE::AGIO_CONNECTED);
+ #endif
+-				//Data recieved, 0x61, 0xBA, 8, targetAltitude(32bits), cutValveReceived, bladeOffsetIn, not used, not used, CRC
+ 				//reset watchdog
+ 				watchdogTimer = 0;
+ 				// Extract 32-bit signed target altitude starting at index 5 (Bytes 5, 6, 7, 8)
+ 				memcpy(&targetAltitude, &udpData[5], sizeof(int32_t));
++
++				// Parche 2: acota la cota objetivo a un rango fisico razonable (-1000 m .. +22000 m).
++				// Los valores >= 20000000 son el centinela "sin objetivo" (modo manual) y se respetan.
++				if (targetAltitude < -1000000) targetAltitude = -1000000;
++				if (targetAltitude > 22000000) targetAltitude = 22000000;
+ 
+ 				// Extract remaining payload single-byte indices
+ 				cutValveReceived = udpData[9];
+ 				bladeOffsetIn = udpData[10];
+ 				// udpData[11] -> not used
+ 				// udpData[12] -> not used
+-				// udpData[13] -> Incoming CRC , not verified
++				// udpData[13] -> CRC (verificado arriba)
+ 			} else if (udpData[3] == 0xB8)  //settings from OG3D
+ 			{
++				if (udpData[4] != 8) return;  // longitud de payload inesperada
++#if VERIFY_INCOMING_CRC
++				if (!validChecksum(udpData, sizeToRead)) return;  // paquete corrupto: no se toca la EEPROM
++#endif
+ 				digitalWrite(13, HIGH);
+ 				pwmGainUp = (int32_t)udpData[5] << 2;
+ 				pwmGainDw = (int32_t)udpData[6] << 2;
+@@ -692,8 +754,14 @@
+ 
+ 	//Use the GNSS height is available
+ 	if (targetAltitude < 20000000) {
+-		// reel minus target plus 100. 100 is on target, <100 is too low, lift, >100 is too high, lower
+-		cutValve = (uint8_t)constrain(altitudeOG - targetAltitude + 100, 0, 200);
++		// FAILSAFE GNSS (parche 1): si la ultima GGA es demasiado antigua, altitudeOG ya
++		// no es valido y NO se debe actuar sobre el: se fuerza el neutro aunque haya objetivo.
++		if (millis() - lastGGAms < GNSS_FRESH_MS) {
++			// reel minus target plus 100. 100 is on target, <100 is too low, lift, >100 is too high, lower
++			cutValve = (uint8_t)constrain(altitudeOG - targetAltitude + 100, 0, 200);
++		} else {
++			cutValve = 100;  // neutro: ni subir ni bajar hasta tener altura fresca
++		}
+ 	} else cutValve = cutValveReceived;
+ 
+ 	if (!workSwitch && autoEnable)  // Auto mode
+@@ -879,7 +947,7 @@
+ 	OG3D[9] = (uint8_t)(leverUpValue >> 2);
+ 	OG3D[10] = leverSideValue;
+ 	OG3D[11] = 0;  // Not used / Padding slot
+-	OG3D[12] = pwmHist;
++	OG3D[12] = 0;  // reservado (antes pwmHist; nunca se calculaba)
+ 
+ 	// 3. Fast CRC checksum calculation over the global frame indexes
+ 	uint8_t calculatedCrc = 0;
+@@ -893,3 +961,63 @@
+ 	Udp.write(OG3D, 14);  // We pass 14 bytes explicitly
+ 	Udp.endPacket();
+ }
++
++//------------------------------------------------------------------------------
++// Parche 8: rellena y envia la telemetria (PGN 0x6A/0xE2) a ipDestination:TELEM_PORT
++// Formato y CRC identicos al resto de tramas del modulo. Payload (34 bytes,
++// little-endian): detalle completo en CAMBIOS_PARCHES.md (Parche 8).
++//------------------------------------------------------------------------------
++static inline void putU16(uint8_t *p, uint16_t v) {
++	p[0] = (uint8_t)(v & 0xFF);
++	p[1] = (uint8_t)(v >> 8);
++}
++
++static inline void putU32(uint8_t *p, uint32_t v) {
++	p[0] = (uint8_t)(v & 0xFF);
++	p[1] = (uint8_t)((v >> 8) & 0xFF);
++	p[2] = (uint8_t)((v >> 16) & 0xFF);
++	p[3] = (uint8_t)(v >> 24);
++}
++
++#if SEND_UDP_TELEMETRY
++void sendTelemetry() {
++	uint32_t ggaAge = millis() - lastGGAms;
++	if (ggaAge > 0xFFFF) ggaAge = 0xFFFF;
++
++	TELEM[5] = fixQualityOG;
++	TELEM[6] = satNbrOG;
++	TELEM[7] = fixTypeGGA;
++
++	uint8_t flags = 0;
++	if (workSwitch) flags |= (1 << 0);        // b0: 1 = manual / seguro
++	if (autoEnable) flags |= (1 << 1);        // b1: auto habilitado
++	if (pwmValue > 0) flags |= (1 << 2);      // b2: ordenando subir
++	if (pwmValue < 0) flags |= (1 << 3);      // b3: ordenando bajar
++	if (millis() - lastGGAms < GNSS_FRESH_MS) flags |= (1 << 4);  // b4: GNSS fresco (Parche 1)
++	if (settingsRecieved) flags |= (1 << 5);  // b5: ajustes 0xB8 recibidos
++	TELEM[8] = flags;
++
++	putU16(&TELEM[9], (uint16_t)hdopOG);
++	putU16(&TELEM[11], (uint16_t)speedOG);
++	putU16(&TELEM[13], (uint16_t)ggaAge);
++	putU16(&TELEM[15], (uint16_t)watchdogTimer);
++	putU32(&TELEM[17], (uint32_t)altitudeOG);
++	putU32(&TELEM[21], (uint32_t)targetAltitude);
++	putU16(&TELEM[25], (uint16_t)cutValve);
++	putU16(&TELEM[27], (uint16_t)pwmValue);
++	putU32(&TELEM[29], gpsBaud);
++	putU32(&TELEM[33], millis() / 1000);
++	TELEM[37] = 1;  // version del formato de telemetria
++	TELEM[38] = 0;  // reservado
++
++	uint8_t crc = 0;
++	for (uint8_t i = 2; i < 5 + TELEM[4]; i++) {
++		crc += TELEM[i];
++	}
++	TELEM[39] = crc;
++
++	Udp.beginPacket(ipDestination, TELEM_PORT);
++	Udp.write(TELEM, sizeof(TELEM));
++	Udp.endPacket();
++}
++#endif  // SEND_UDP_TELEMETRY
+--- a/GPS.ino
++++ b/GPS.ino
+@@ -1,63 +1,69 @@
++//------------------------------------------------------------------------------
++// Parche 7: declara (extern) los objetos que viven en los otros .ino (parser,
++// NtripUdp, NtripData...). Debe ser la PRIMERA linea de este archivo para que
++// el sketch compile sea cual sea el orden de concatenacion de los .ino.
++#include "OG3D_Globals.h"
++//------------------------------------------------------------------------------
++
+ // Definimos los punteros para los puertos dinámicos
+ HardwareSerial* SerialGPS = &Serial7; 
+-HardwareSerial* SerialGPS2 = &Serial2;
+-
+ #define GPS_RTK Serial3
+ #define RTK_Baud 115200
++
++// Parche 3: baudios a probar en la autodetección del GPS (orden de probabilidad)
++const uint32_t gpsBaudRates[] = { 460800, 115200, 921600, 38400, 9600 };
++uint32_t gpsBaud = 460800;  // baud del GPS detectado (o el por defecto)
+ 
+ char rxbuffer[512];   
+ char txbuffer[1023];  
+ char rxbuffer_RTK[1023];      
+ 
+-char nmeaBuffer[200];
+-int count = 0;
+-bool stringComplete = false;
+ 
+-byte CK_A = 0;
+-byte CK_B = 0;
+-byte ackPacket[72] = { 0xB5, 0x62, 0x01, 0x3C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+-
+-// Función auxiliar para detectar tramas GGA en un puerto
+-bool detectGGAOnPort(HardwareSerial* port, uint32_t detectionMs) {
++// Función auxiliar para detectar tramas GGA en un puerto.
++// Parche 3: prueba varios baudios y devuelve el baud al que se encontró el GPS (0 si no).
++uint32_t detectGGAOnPort(HardwareSerial* port, uint32_t detectionMs) {
+   const char* pattern1 = "$GNGGA";
+   const char* pattern2 = "$GPGGA";
+-  uint8_t idx1 = 0;
+-  uint8_t idx2 = 0;
+ 
+-  port->begin(460800);
+-  delay(100);
++  for (uint8_t b = 0; b < sizeof(gpsBaudRates) / sizeof(gpsBaudRates[0]); b++) {
++    uint8_t idx1 = 0;
++    uint8_t idx2 = 0;
+ 
+-  while (port->available()) {
+-    port->read();
+-  }
++    port->begin(gpsBaudRates[b]);
++    delay(100);
+ 
+-  uint32_t start = millis();
+-  while (millis() - start < detectionMs) {
+     while (port->available()) {
+-      char c = port->read();
+-      if (c == pattern1[idx1]) {
+-        idx1++;
+-        if (pattern1[idx1] == '\0') {
+-          port->end();
+-          return true;
++      port->read();
++    }
++
++    uint32_t start = millis();
++    while (millis() - start < detectionMs) {
++      while (port->available()) {
++        char c = port->read();
++        if (c == pattern1[idx1]) {
++          idx1++;
++          if (pattern1[idx1] == '\0') {
++            port->end();
++            return gpsBaudRates[b];
++          }
++        } else {
++          idx1 = (c == pattern1[0]) ? 1 : 0;
+         }
+-      } else {
+-        idx1 = (c == pattern1[0]) ? 1 : 0;
+-      }
+ 
+-      if (c == pattern2[idx2]) {
+-        idx2++;
+-        if (pattern2[idx2] == '\0') {
+-          port->end();
+-          return true;
++        if (c == pattern2[idx2]) {
++          idx2++;
++          if (pattern2[idx2] == '\0') {
++            port->end();
++            return gpsBaudRates[b];
++          }
++        } else {
++          idx2 = (c == pattern2[0]) ? 1 : 0;
+         }
+-      } else {
+-        idx2 = (c == pattern2[0]) ? 1 : 0;
+       }
+     }
++    port->end();
+   }
+-  port->end();
+-  return false;
++  return 0;
+ }
+ 
+ //**************************************************************
+@@ -66,28 +72,31 @@
+   Serial.println("Detectando puerto del GPS (Serial2 o Serial7)...");
+   
+   // Comprobamos primero en el Serial2 (donde lo tienes conectado)
+-  bool foundOnSerial2 = detectGGAOnPort(&Serial2, 400);
++  uint32_t foundBaud = detectGGAOnPort(&Serial2, 500);
+   
+-  if (foundOnSerial2) {
++  if (foundBaud) {
+     Serial.println("¡GPS detectado automáticamente en Serial2!");
+     SerialGPS = &Serial2;
+-    SerialGPS2 = &Serial7;
+   } else {
+     Serial.println("No se encontró en Serial2, probando Serial7...");
+-    bool foundOnSerial7 = detectGGAOnPort(&Serial7, 400);
+-    if (foundOnSerial7) {
++    foundBaud = detectGGAOnPort(&Serial7, 500);
++    if (foundBaud) {
+       Serial.println("¡GPS detectado automáticamente en Serial7!");
+       SerialGPS = &Serial7;
+-      SerialGPS2 = &Serial2;
+     } else {
+-      Serial.println("No se detectó GPS. Usando Serial2 por defecto.");
++      Serial.println("No se detectó GPS. Usando Serial2 a 460800 por defecto.");
+       SerialGPS = &Serial2;
+-      SerialGPS2 = &Serial7;
++      foundBaud = 460800;
+     }
+   }
+ 
+-  // Inicializamos el puerto seleccionado con 460800 baudios
+-  SerialGPS->begin(460800);
++  gpsBaud = foundBaud;
++  Serial.print("GPS a ");
++  Serial.print(gpsBaud);
++  Serial.println(" baudios");
++
++  // Inicializamos el puerto seleccionado con el baud detectado
++  SerialGPS->begin(gpsBaud);
+   SerialGPS->addMemoryForRead(rxbuffer, 512);
+   SerialGPS->addMemoryForWrite(txbuffer, 1023);
+ 
+@@ -108,16 +117,6 @@
+   }
+ }
+ 
+-bool calcChecksum() {
+-  CK_A = 0;
+-  CK_B = 0;
+-  for (int i = 2; i < 70; i++) {
+-    CK_A = CK_A + ackPacket[i];
+-    CK_B = CK_B + CK_A;
+-  }
+-  return (CK_A == ackPacket[70] && CK_B == ackPacket[71]);
+-}
+-
+ //**************************************************************
+ 
+ void Forward_Ntrip() {
+@@ -133,9 +132,3 @@
+   }
+ }
+ 
+-//-------------------------------------------------------------------------------------------------
+-
+-void clearBufferArray() {
+-  strcpy(nmeaBuffer, "");
+-  stringComplete = false;
+-}
+--- a/HW_messages.ino
++++ b/HW_messages.ino
+@@ -1,11 +1,19 @@
+ // ----------------------------------------------------------
+ // Send a hardware message with proper header, payload, and CRC
+ //
++// Parche 7: include que declara Udp (definido en OG3D_Teensy_Firmware.ino) y los
++// tipos de red. Debe ir antes de cualquier otra sentencia de este archivo para
++// que compile en cualquier orden de concatenacion de los .ino.
++#include "OG3D_Globals.h"
++
+ String HWmessage = "Error";
+ 
+ // sendHardwareMessage("put your message here", 3, 1, ipDestination, 9999)
+ 
+-void sendHardwareMessage(const String& message, uint8_t seconds, uint8_t color, IPAddress ipDest, uint16_t port) {
++// Parche 7: la IP de destino se recibe como uint8_t[4] (p.ej. ipDestination) en
++// lugar de IPAddress. Asi los prototipos automaticos que genera el IDE no
++// dependen de NativeEthernet.h y el sketch compila en cualquier orden.
++void sendHardwareMessage(const String& message, uint8_t seconds, uint8_t color, uint8_t ipDest[], uint16_t port) {
+   uint8_t hardwareMessage[128] = { 0x80, 0x81, 0x7E, 221 };
+ 
+   int msgLen = message.length();  // byte count (ASCII assumed)
+@@ -22,11 +30,6 @@
+   // Copy message into buffer
+   message.getBytes(&hardwareMessage[7], msgLen + 1);
+ 
+-  // Copy the range we need for checksum into temp buffer
+-  uint8_t temp[128];
+-  int checksumLen = 7 + msgLen - 2;  // from index 2 up to 6+msgLen
+-  memcpy(temp, hardwareMessage + 2, checksumLen);
+-
+   // Sum for checksum
+   int16_t CK_A = 0;
+   for (int i = 2; i < 7 + msgLen; i++) {
+@@ -37,8 +40,9 @@
+   SendHardwareMessage(hardwareMessage, totalLength, ipDest, port);
+ }
+ 
+-void SendHardwareMessage(uint8_t data[], uint8_t size, IPAddress ipDest, uint16_t port) {
+-  Udp.beginPacket(ipDest, port);
++void SendHardwareMessage(uint8_t data[], uint8_t size, uint8_t ipDest[], uint16_t port) {
++  IPAddress dest(ipDest[0], ipDest[1], ipDest[2], ipDest[3]);
++  Udp.beginPacket(dest, port);
+   Udp.write(data, size);
+   Udp.endPacket();
+ }
+@@ -49,6 +53,7 @@
+ 
+   HWmessage = String("Test");
+ 
++  // ipDestination es uint8_t[4], compatible con el nuevo parametro ipDest[]
+   sendHardwareMessage(HWmessage, messageSeconds, messageColor, ipDestination, 9999);
+ }
+ */--- a/zHandlers.ino
++++ b/zHandlers.ino
+@@ -1,8 +1,10 @@
+-// Conversion to Hexidecimal
+-const char* asciiHex = "0123456789ABCDEF";
+-
+-// the new PANDA sentence buffer
+-char nmea[100];
++//------------------------------------------------------------------------------
++// Parche 7: declara (extern) parser, Udp, las variables GNSS y el resto de
++// objetos definidos en los otros .ino. Normalmente zHandlers.ino queda el
++// ultimo en la concatenacion, pero el include garantiza que compile en
++// cualquier orden y tambien por separado.
++#include "OG3D_Globals.h"
++//------------------------------------------------------------------------------
+ 
+ // GGA
+ char fixTime[12];
+@@ -23,8 +25,6 @@
+ char speedKPH[10] = {};
+ 
+ //HPR
+-bool useHPR = false;
+-bool dualReadyHPR = false;
+ float hprHeading = 0;
+ float hprRoll = 0;
+ char hprSolQuality[12] = {};
+@@ -51,9 +51,12 @@
+ 	// latitude
+ 	parser.getArg(1, latitude);
+ 	tempString = latitude;
++
++	parser.getArg(2, latNS);
++	// Parche 5: se aplica el hemisferio tambien a pivotLat/pivotLon
++	// (antes pivotLat nunca se negaba y pivotLon se negaba siempre)
+ 	pivotLat = tempString.toFloat();
+-
+-	parser.getArg(2, latNS);
++	if (latNS[0] == 'S') pivotLat = -pivotLat;
+ 	// Convert decimal latitude to int64_t with 10^9 scaling (Sub-millimeter)
+ 	// If Southern hemisphere, make the coordinate negative
+ 	latitudeOG = (int64_t)llround(atof(tempString.c_str()) * 1000000000.0);
+@@ -62,10 +65,10 @@
+ 	// longitude
+ 	parser.getArg(3, longitude);
+ 	tempString = longitude;
++
++	parser.getArg(4, lonEW);
+ 	pivotLon = tempString.toFloat();
+-	pivotLon *= -1;
+-
+-	parser.getArg(4, lonEW);
++	if (lonEW[0] == 'W') pivotLon = -pivotLon;
+ 	// Convert decimal longitude to int64_t with 10^9 scaling
+ 	// If Western hemisphere, make the coordinate negative
+ 	longitudeOG = (int64_t)llround(atof(tempString.c_str()) * 1000000000.0);
+@@ -103,6 +106,7 @@
+ 	altitudeOG = (int32_t)round(tempString.toFloat() * 1000.0f);
+ 
+ 	dataGNSSrecieved = 0;
++	lastGGAms = millis();  // Parche 1: marca de tiempo para el failsafe GNSS de SetPWM
+ 	// height of geoid
+ 	parser.getArg(10, geoid);
+ 
+@@ -229,32 +233,6 @@
+ #endif
+ 	}
+ 	fixQualityOG = 255;
+-}
+-
+-void CalculateChecksum(void) {
+-	int16_t sum = 0;
+-	int16_t inx = 0;
+-	char tmp;
+-
+-	// The checksum calc starts after '$' and ends before '*'
+-	for (inx = 1; inx < 200; inx++) {
+-		tmp = nmea[inx];
+-
+-		// * Indicates end of data and start of checksum
+-		if (tmp == '*') {
+-			break;
+-		}
+-
+-		sum ^= tmp;  // Build checksum
+-	}
+-
+-	byte chk = (sum >> 4);
+-	char hex[2] = { asciiHex[chk], 0 };
+-	strcat(nmea, hex);
+-
+-	chk = (sum % 16);
+-	char hex2[2] = { asciiHex[chk], 0 };
+-	strcat(nmea, hex2);
+ }
+ 
+ /*
+--- a/OG3D_Globals.h
++++ b/OG3D_Globals.h
+@@ -0,0 +1,89 @@
++//--------------------------------------------------------------------------------
++// OG3D_Globals.h -- Parche 7: compatibilidad de compilacion multi-archivo
++//
++// POR QUE EXISTE ESTE ARCHIVO:
++// El IDE de Arduino/Teensyduino concatena todos los .ino del sketch en un solo
++// archivo .cpp, pero el orden NO siempre es "el sketch principal primero": si el
++// nombre del archivo principal no coincide EXACTAMENTE (mayusculas incluidas)
++// con el nombre de la carpeta, se concatenan en orden alfabetico y GPS.ino y
++// HW_messages.ino quedan ANTES de OG3D_Teensy_Firmware.ino, sin ver sus
++// declaraciones. Sintomas tipicos:
++//   error: 'IPAddress' has not been declared
++//   error: 'parser' was not declared in this scope
++//   error: 'Udp' was not declared in this scope
++//   error: 'NtripUdp' was not declared in this scope
++//   error: 'NtripData' was not declared in this scope
++//
++// SOLUCION: este encabezado declara como 'extern' los objetos globales
++// compartidos y los prototipos de las funciones entre archivos, de forma que
++// cada .ino compila en cualquier orden. Las definiciones reales siguen donde
++// estaban (OG3D_Teensy_Firmware.ino, GPS.ino, HW_messages.ino) y no cambia
++// ningun comportamiento: coste de RAM/Flash adicional = 0 bytes.
++//
++// IMPORTANTE (regla de oro del IDE): la carpeta del sketch debe llamarse igual
++// que el archivo principal. Aqui: carpeta "OG3D_Teensy_Firmware" que contenga
++// "OG3D_Teensy_Firmware.ino". Con este parche compila incluso si no coinciden,
++// pero manteniendo el nombre evitas otros efectos secundarios del IDE.
++//--------------------------------------------------------------------------------
++#ifndef OG3D_GLOBALS_H
++#define OG3D_GLOBALS_H
++
++#include <Arduino.h>
++#include <NativeEthernet.h>
++#include <NativeEthernetUdp.h>
++#include "zNMEAParser.h"
++
++//-------------------- Definidos en OG3D_Teensy_Firmware.ino --------------------
++extern NMEAParser<3> parser;      // parser NMEA (3 manejadores como maximo)
++extern EthernetUDP Udp;           // UDP principal (puerto local 8888)
++extern EthernetUDP NtripUdp;      // UDP de correcciones NTRIP (puerto 2233)
++extern byte udpData[128];         // buffer de recepcion UDP
++extern byte NtripData[512];       // buffer de correcciones NTRIP
++extern uint8_t ipDestination[];   // IP de broadcast AgIO/OG3D (x.x.x.255)
++extern uint8_t GNSS1[];           // trama GNSS1 (0x6A/0xD1) hacia OG3D
++
++// Datos GNSS compartidos con zHandlers.ino
++extern bool blink;
++extern float utcTime, geoidalGGA;
++extern uint8_t fixTypeGGA, satsGGA;
++extern float hdopGGA, rtkAgeGGA;
++extern double pivotLat, pivotLon, fixHeading, pivotAltitude;
++extern int64_t longitudeOG, latitudeOG;  // x 10^9
++extern int32_t altitudeOG;               // mm
++extern uint16_t dualHeadingOG, singleHeadingOG, imuHeadingOG;  // x 100
++extern int16_t dualRollOG, imuRollOG, imuPitchOG, imuYawRateOG, speedOG, hdopOG, ageOG;
++extern uint8_t fixQualityOG, satNbrOG;
++extern int32_t dataGNSSrecieved;  // ticks de 5 ms desde la ultima GGA
++extern uint32_t lastGGAms;        // millis() de la ultima GGA (Parche 1)
++
++//------------------------------ Definidos en GPS.ino ------------------------------
++extern HardwareSerial* SerialGPS;  // puerto serie donde se detecto el GPS
++extern uint32_t gpsBaud;           // baudios detectados del GPS (Parche 3)
++
++//------------------------ Prototipos de funciones compartidas ------------------------
++// El IDE genera los suyos automaticamente; estos no son necesarios cuando todo
++// se concatena en un solo .cpp, pero permiten que cada archivo compile tambien
++// por separado y documentan la interfaz entre archivos.
++void errorHandler();
++void GGA_Handler();
++void VTG_Handler();
++void HPR_Handler();
++void ZDA_Handler();
++void BuildNmea();
++uint32_t detectGGAOnPort(HardwareSerial *port, uint32_t detectionMs);
++void GPS_setup();
++void Panda_GPS();
++void Forward_Ntrip();
++// NOTA (Parche 7): la IP de destino se pasa como uint8_t[4] y no como IPAddress
++// para que los prototipos automaticos del IDE no dependan de NativeEthernet.h.
++void sendHardwareMessage(const String &message, uint8_t seconds, uint8_t color, uint8_t ipDest[], uint16_t port);
++void SendHardwareMessage(uint8_t data[], uint8_t size, uint8_t ipDest[], uint16_t port);
++bool validChecksum(byte *inData, int packetSize);
++void udpMessageRecv(int sizeToRead);
++void SetPWM(void);
++void SaveToEEPROM();
++void ReadFromEEPROM();
++void SendUDPbladeData();
++void sendTelemetry();  // Parche 8: trama de telemetria UDP 0x6A/0xE2 hacia AgIO
++
++#endif  // OG3D_GLOBALS_H

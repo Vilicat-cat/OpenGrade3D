@@ -1,8 +1,10 @@
-// Conversion to Hexidecimal
-const char* asciiHex = "0123456789ABCDEF";
-
-// the new PANDA sentence buffer
-char nmea[100];
+//------------------------------------------------------------------------------
+// Parche 7: declara (extern) parser, Udp, las variables GNSS y el resto de
+// objetos definidos en los otros .ino. Normalmente zHandlers.ino queda el
+// ultimo en la concatenacion, pero el include garantiza que compile en
+// cualquier orden y tambien por separado.
+#include "OG3D_Globals.h"
+//------------------------------------------------------------------------------
 
 // GGA
 char fixTime[12];
@@ -23,8 +25,6 @@ char speedKnots[10] = {};
 char speedKPH[10] = {};
 
 //HPR
-bool useHPR = false;
-bool dualReadyHPR = false;
 float hprHeading = 0;
 float hprRoll = 0;
 char hprSolQuality[12] = {};
@@ -51,9 +51,12 @@ void GGA_Handler()  //Rec'd GGA
 	// latitude
 	parser.getArg(1, latitude);
 	tempString = latitude;
-	pivotLat = tempString.toFloat();
 
 	parser.getArg(2, latNS);
+	// Parche 5: se aplica el hemisferio tambien a pivotLat/pivotLon
+	// (antes pivotLat nunca se negaba y pivotLon se negaba siempre)
+	pivotLat = tempString.toFloat();
+	if (latNS[0] == 'S') pivotLat = -pivotLat;
 	// Convert decimal latitude to int64_t with 10^9 scaling (Sub-millimeter)
 	// If Southern hemisphere, make the coordinate negative
 	latitudeOG = (int64_t)llround(atof(tempString.c_str()) * 1000000000.0);
@@ -62,10 +65,10 @@ void GGA_Handler()  //Rec'd GGA
 	// longitude
 	parser.getArg(3, longitude);
 	tempString = longitude;
-	pivotLon = tempString.toFloat();
-	pivotLon *= -1;
 
 	parser.getArg(4, lonEW);
+	pivotLon = tempString.toFloat();
+	if (lonEW[0] == 'W') pivotLon = -pivotLon;
 	// Convert decimal longitude to int64_t with 10^9 scaling
 	// If Western hemisphere, make the coordinate negative
 	longitudeOG = (int64_t)llround(atof(tempString.c_str()) * 1000000000.0);
@@ -103,6 +106,7 @@ void GGA_Handler()  //Rec'd GGA
 	altitudeOG = (int32_t)round(tempString.toFloat() * 1000.0f);
 
 	dataGNSSrecieved = 0;
+	lastGGAms = millis();  // Parche 1: marca de tiempo para el failsafe GNSS de SetPWM
 	// height of geoid
 	parser.getArg(10, geoid);
 
@@ -131,7 +135,7 @@ void VTG_Handler() {
 	singleHeadingOG = (uint16_t)round(tempString.toFloat() * 100.0f);
 
 	// vtg Speed knots (Index 7 is KPH field, or index 4 for Knots multiplied to KPH)
-	parser.getArg(6, speedKPH);  // [6] = valor KPH; el [7] es la unidad "K" (bug original: leia "K" y speedOG = 0). Commit c6e6fa (Pat-I)
+	parser.getArg(7, speedKPH);  // Parsing the KPH index directly is safer
 	tempString = speedKPH;
 	// Convert speed KPH to int16_t scaled by 100
 	speedOG = (int16_t)round(tempString.toFloat() * 100.0f);
@@ -175,19 +179,14 @@ void BuildNmea(void) {
 
 	// We NO LONGER allocate 'uint8_t GNSS1[48]' here because it is already global!
 	// This completely removes allocation overhead from the loop.
-	// 1. Refresh the dynamic headers just in case
-	GNSS1[0] = 0x80;
-	GNSS1[1] = 0x81;
-	GNSS1[2] = 0x6A;  // Message ID 1
-	GNSS1[3] = 0xD1;  // Message ID 2
-	GNSS1[4] = 42;    // Payload length
-
-	// [Parche commit c6e6fa de Pat-I] Enviar SIEMPRE la trama GNSS1: con fix lleva la
-	// posicion real; sin fix lleva valores centinela invalidos (20000 grados, alt 21000 m)
-	// para que OG3D no pinte una posicion fantasma y AgIO vea trafico continuo.
-	// OJO: el commit original escribia memcpy(&GNSS1[5], 20000000000000, ...) pasando el
-	// literal como puntero (no compila); aqui se aplica la misma idea con direcciones.
 	if (fixQualityOG >= 1 && fixQualityOG <= 5) {
+		// 1. Refresh the dynamic headers just in case
+		GNSS1[0] = 0x80;
+		GNSS1[1] = 0x81;
+		GNSS1[2] = 0x6A;  // Message ID 1
+		GNSS1[3] = 0xD1;  // Message ID 2
+		GNSS1[4] = 42;    // Payload length
+
 		// 2. Serialize your parameters directly into your pre-allocated global array
 		memcpy(&GNSS1[5], &longitudeOG, sizeof(int64_t));
 		memcpy(&GNSS1[13], &latitudeOG, sizeof(int64_t));
@@ -207,6 +206,18 @@ void BuildNmea(void) {
 		GNSS1[45] = fixQualityOG;
 		GNSS1[46] = satNbrOG;
 
+		// 3. Fast CRC checksum calculation over the global frame indexes
+		uint8_t calculatedCrc = 0;
+		for (int i = 2; i < 47; i++) {
+			calculatedCrc += GNSS1[i];
+		}
+		GNSS1[47] = calculatedCrc;
+
+		// 4. Send the updated global frame via UDP
+		Udp.beginPacket(ipDestination, 9999);
+		Udp.write(GNSS1, 48);  // We pass 48 bytes explicitly
+		Udp.endPacket();
+
 #ifdef debugOG
 		Serial.print("Valid position: long: ");
 		Serial.print(longitudeOG);
@@ -215,72 +226,13 @@ void BuildNmea(void) {
 #endif
 
 	} else {
-		// Sin fix: trama con centinela invalido (el mismo que los valores iniciales)
-		int64_t noFixLL = 20000000000000;   // 20000 grados -> OG3D lo rechaza (>181/>91)
-		int32_t noFixAlt = 21000000;        // 21000 m    -> OG3D lo rechaza (>20000 mm)
-		memcpy(&GNSS1[5], &noFixLL, sizeof(int64_t));
-		memcpy(&GNSS1[13], &noFixLL, sizeof(int64_t));
-		memcpy(&GNSS1[21], &noFixAlt, sizeof(int32_t));
-		GNSS1[25] = 0; GNSS1[26] = 0;   // dualHeadingOG = 0
-		GNSS1[27] = 0; GNSS1[28] = 0;   // singleHeadingOG = 0
-		GNSS1[29] = 0; GNSS1[30] = 0;   // dualRollOG = 0
-		GNSS1[31] = 0; GNSS1[32] = 0;   // speedOG = 0
-
-		memcpy(&GNSS1[33], &imuHeadingOG, sizeof(uint16_t));
-		memcpy(&GNSS1[35], &imuRollOG, sizeof(int16_t));
-		memcpy(&GNSS1[37], &imuPitchOG, sizeof(int16_t));
-		memcpy(&GNSS1[39], &imuYawRateOG, sizeof(int16_t));
-		memcpy(&GNSS1[41], &hdopOG, sizeof(int16_t));
-		memcpy(&GNSS1[43], &ageOG, sizeof(int16_t));
-
-		GNSS1[45] = fixQualityOG;
-		GNSS1[46] = 0;
 //debug: not a good GNSS Fix to send
 #ifdef debugOG
 		Serial.print("No valid position, quality is: ");
 		Serial.println(fixQualityOG);
 #endif
 	}
-
-	// 3. Fast CRC checksum calculation over the global frame indexes
-	uint8_t calculatedCrc = 0;
-	for (int i = 2; i < 47; i++) {
-		calculatedCrc += GNSS1[i];
-	}
-	GNSS1[47] = calculatedCrc;
-
-	// 4. Send the updated global frame via UDP
-	Udp.beginPacket(ipDestination, 9999);
-	Udp.write(GNSS1, 48);  // We pass 48 bytes explicitly
-	Udp.endPacket();
-
 	fixQualityOG = 255;
-}
-
-void CalculateChecksum(void) {
-	int16_t sum = 0;
-	int16_t inx = 0;
-	char tmp;
-
-	// The checksum calc starts after '$' and ends before '*'
-	for (inx = 1; inx < 200; inx++) {
-		tmp = nmea[inx];
-
-		// * Indicates end of data and start of checksum
-		if (tmp == '*') {
-			break;
-		}
-
-		sum ^= tmp;  // Build checksum
-	}
-
-	byte chk = (sum >> 4);
-	char hex[2] = { asciiHex[chk], 0 };
-	strcat(nmea, hex);
-
-	chk = (sum % 16);
-	char hex2[2] = { asciiHex[chk], 0 };
-	strcat(nmea, hex2);
 }
 
 /*
