@@ -1,0 +1,74 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- Parche integración OG3D: PublishDir original eliminado -->
+    <!-- Parche integración OG3D: la salida va a la carpeta Application del repo,
+         igual que hace el proyecto GPS (OpenGrade3D.exe). Así AgIO.exe y sus DLL
+         (AgLibrary, AgIOKeypad, System.Memory, System.Resources.Extensions...) quedan
+         junto a OpenGrade3D.exe al compilar la solución y TryStartAgIO() los encuentra
+         y arranca AgIO solo, sin copiar nada a mano. -->
+    <OutputPath>..\..\..\Application\</OutputPath>
+    <ApplicationIcon>AgIO_ico.ico</ApplicationIcon>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImportWindowsDesktopTargets>true</ImportWindowsDesktopTargets>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EmbeddedResourceUseDependentUponConvention>true</EmbeddedResourceUseDependentUponConvention>
+    <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Configuration" />
+    <Reference Include="WindowsBase" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\AgLibrary\AgLibrary.csproj" />
+    <!-- Parche integración OG3D: copia propia del Keypad de AgOpenGPS, ensamblado renombrado
+         a AgIOKeypad para no chocar con el Keypad.dll de OpenGrade3D en la misma carpeta -->
+    <ProjectReference Include="..\..\AgIO_Keypad\Keypad.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Parche integración OG3D (iteración 10): versiones fijadas al mismo set que
+         entrega OpenGrade3D en Application/ (SRE 4.7.1 = AssemblyVersion 4.0.1.0,
+         Memory 4.5.5 = 4.0.1.2) para que las bindingRedirect de app.config cuadren
+         en ambos ejecutables y ninguna build pise DLLs con versiones distintas -->
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+    <PackageReference Include="System.Resources.Extensions" Version="4.7.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="Forms\Controls.Designer.cs">
+      <DependentUpon>FormLoop.cs</DependentUpon>
+    </Compile>
+    <Compile Update="Forms\NMEA.Designer.cs">
+      <DependentUpon>FormLoop.cs</DependentUpon>
+    </Compile>
+    <Compile Update="Forms\NTRIPComm.Designer.cs">
+      <DependentUpon>FormLoop.cs</DependentUpon>
+    </Compile>
+    <Compile Update="Forms\SerialComm.Designer.cs">
+      <DependentUpon>FormLoop.cs</DependentUpon>
+    </Compile>
+    <Compile Update="Forms\UDP.Designer.cs">
+      <DependentUpon>FormLoop.cs</DependentUpon>
+    </Compile>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>
