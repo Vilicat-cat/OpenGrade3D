@@ -1,0 +1,46 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <!-- Parche integración OG3D: ensamblado renombrado para no chocar con el
+         Keypad.dll propio de OpenGrade3D si ambos exe comparten carpeta -->
+    <AssemblyName>AgIOKeypad</AssemblyName>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImportWindowsDesktopTargets>true</ImportWindowsDesktopTargets>
+    <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Parche integración OG3D (iteración 10): mismo set que entrega OpenGrade3D
+         en Application/ para que las bindingRedirect cuadren en todos los exes -->
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+    <PackageReference Include="System.Resources.Extensions" Version="4.7.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="GenericKeypad.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Update="NumKeypad.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Update="Keyboard.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>
