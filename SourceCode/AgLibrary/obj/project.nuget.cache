@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "dgSpecHash": "BOEDiJTSN4Q=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\vilic\\Desktop\\OpenGrade3D\\SourceCode\\AgLibrary\\AgLibrary.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\vilic\\.nuget\\packages\\accord\\3.8.0\\accord.3.8.0.nupkg.sha512",
+    "C:\\Users\\vilic\\.nuget\\packages\\accord.imaging\\3.8.0\\accord.imaging.3.8.0.nupkg.sha512",
+    "C:\\Users\\vilic\\.nuget\\packages\\accord.math\\3.8.0\\accord.math.3.8.0.nupkg.sha512",
+    "C:\\Users\\vilic\\.nuget\\packages\\accord.statistics\\3.8.0\\accord.statistics.3.8.0.nupkg.sha512",
+    "C:\\Users\\vilic\\.nuget\\packages\\accord.video\\3.8.0\\accord.video.3.8.0.nupkg.sha512",
+    "C:\\Users\\vilic\\.nuget\\packages\\accord.video.directshow\\3.8.0\\accord.video.directshow.3.8.0.nupkg.sha512",
+    "C:\\Users\\vilic\\.nuget\\packages\\system.buffers\\4.5.1\\system.buffers.4.5.1.nupkg.sha512",
+    "C:\\Users\\vilic\\.nuget\\packages\\system.memory\\4.5.5\\system.memory.4.5.5.nupkg.sha512",
+    "C:\\Users\\vilic\\.nuget\\packages\\system.numerics.vectors\\4.5.0\\system.numerics.vectors.4.5.0.nupkg.sha512",
+    "C:\\Users\\vilic\\.nuget\\packages\\system.runtime.compilerservices.unsafe\\4.5.3\\system.runtime.compilerservices.unsafe.4.5.3.nupkg.sha512"
+  ],
+  "logs": []
+}
