@@ -1,0 +1,91 @@
+﻿//Please, if you use this give me some credit
+//Copyright BrianTee, copy right out of it.
+
+using System;
+using System.Windows.Forms;
+
+namespace OpenGrade
+{
+    public partial class FormGPSData : Form
+    {
+        private readonly FormGPS mf = null;
+
+        //public decimal ReturnValue1 { get; set; }
+
+        public FormGPSData(Form callingForm)
+        {
+            mf = callingForm as FormGPS;
+            InitializeComponent();
+        }
+
+        private void timer1_Tick(object sender, EventArgs e)
+        {
+            //all the fixings and position
+            lblNorthing.Text = mf.FixNorthing;
+            lblEasting.Text = mf.FixEasting;
+            lblLatitude.Text = mf.Latitude;
+            lblLongitude.Text = mf.Longitude;
+            lblAltitude.Text = mf.GNSSaltitude;
+
+            //other sat and GPS info
+            lblFixQuality.Text = mf.FixQuality;
+            lblSatsTracked.Text = mf.SatsTracked;
+            lblStatus.Text = mf.Status;
+            lblHDOP.Text = mf.HDOP;
+
+            if (mf.dataFromOGudpBlade <= 15)
+            {
+                // --- HIGH-PERFORMANCE STRING BUILDER FOR LIVE TELEMETRY ---
+                System.Text.StringBuilder sb = new System.Text.StringBuilder();
+
+                sb.Append("Delta(mm): ");
+                sb.Append((int)(mf.bladeFromModuleCutValve - 100));
+                sb.Append(" | "); // Separator for readability
+
+                // 1. Evaluate PWM and Direction States
+                if (mf.bladeFromModulePWM == 0)
+                {
+                    sb.Append("--");
+                }
+                else
+                {
+                    sb.Append(mf.bladeFromModulePWM);
+                    if (mf.bladeFromModuleUp) sb.Append(" Up");
+                    else if (mf.bladeFromModuleDown) sb.Append(" Dn");
+                }
+
+                sb.Append(" | "); // Separator for readability
+
+                // 2. Evaluate Operating System Modes
+                
+                if (mf.bladeFromModuleReady)
+                {
+                    if (mf.bladeFromModuleActive)
+                    {
+                        sb.Append("Automode Active");
+                    } 
+                    else sb.Append("Automode Ready");
+                }
+                else
+                {
+                    sb.Append("Manual Mode");
+                }
+
+                sb.Append(" | "); // Separator
+
+                sb.Append("Lever Value: ").Append(mf.bladeFromModuleLever);
+                tboxSerialFromRelay.Text = sb.ToString();
+            }
+            else tboxSerialFromRelay.Text = mf.mc.serialRecvRelayRateStr;
+            tboxSerialToRelay.Text = mf.GNSScutAltitude.ToString() + "," + mf.mc.relayRateData[0] + "," + mf.mc.relayRateData[1]
+                 + "," + mf.mc.relayRateData[2] + "," + mf.mc.relayRateData[3] + "," + mf.mc.relayRateData[4] + "," + mf.mc.relayRateData[5]
+                 + "," + mf.mc.relayRateData[6] + "," + mf.mc.relayRateData[7]; //setpoint hi lo  
+            tboxNMEASerial.Text = mf.recvSentenceSettings;
+            //tboxNMEASerial.Text = mainForm.pn.rawBuffer;
+
+            tboxSerialFromAutoSteer.Text = mf.mc.serialRecvAutoSteerStr;
+            tboxSerialToAutoSteer.Text = "32766, " + mf.mc.autoSteerData[mf.mc.sdRelay] + ", " + mf.mc.autoSteerData[mf.mc.sdSpeed]
+                                    + ", " + mf.guidanceLineDistanceOff + ", " + mf.guidanceLineSteerAngle;
+        }
+     }
+}
