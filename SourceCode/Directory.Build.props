@@ -1,0 +1,18 @@
+<Project>
+
+  <!-- Parche integración OG3D: los proyectos SDK-style extraídos de AgOpenGPS
+       (AgLibrary, AgIO, AgIO_Keypad) compilan contra .NET Framework 4.8,
+       el mismo target de OpenGrade3D. Los proyectos old-style de OpenGrade3D
+       (GPS, KeyPad) no se ven afectados: usan su propio TargetFrameworkVersion. -->
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+  </PropertyGroup>
+
+  <!-- Sandbox Linux: override de las reference assemblies si el directorio
+       existe (condición Exists para no afectar builds en Windows). -->
+  <PropertyGroup Condition="Exists('/home/z/my-project/tools/net48ref/build/.NETFramework/v4.8')">
+    <FrameworkPathOverride>/home/z/my-project/tools/net48ref/build/.NETFramework/v4.8</FrameworkPathOverride>
+  </PropertyGroup>
+
+</Project>
